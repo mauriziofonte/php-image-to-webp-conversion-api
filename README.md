@@ -143,3 +143,137 @@ If, for some reason, the application cannot serve your request, the response wil
 So, always check for the **status** key on the root object in the response payload.
 
 For any application-level error, like **Invalid api key provided**, an http status code error, like **401 unauthorized** will be sent out with the response.
+
+## Full PHP implementation example
+
+A full PHP implementation example of how to use the API via PHP is provided:
+
+```
+<?php
+    $images = [
+        [
+            'path' => '/home/user/files/image1.jpg',
+            'file_id' => 1,
+            'description' => 'First Image'
+        ],
+        [
+            'path' => '/home/user/files/image2.jpg',
+            'file_id' => 2,
+            'description' => 'Second Image'
+        ],
+        [
+            'path' => '/home/user/files/not_an_image.iso',
+            'file_id' => 5,
+            'description' => 'Invalid Image'
+        ]
+    ];
+
+    // call the imageToWebpApi() function
+    $webp_images = imageToWebpApi('https://my-api-server.example.com/converter', 'VERY_STRONG_API_KEY', $images);
+    if ($webp_images['status'] === true) {
+        foreach ($webp_images['response'] as $i => $conversion_data) {
+            // IMPORTANT: keep in mind that every "$conversion_data" item contains the custom keys
+            // provided in this example as "file_id" and "description", transparently
+            // passed back out from the API
+            if ($conversion_data['status'] === true) {
+                // ok, the image has been converted correctly.
+                // do whatever you need with the image (save to file perhaps? :))
+
+                echo 'Conversion OK for image ' . $conversion_data['filename'] . chr(10);
+                echo chr(9) . 'Original image size: ' . $conversion_data['orig_filesize'] . chr(10);
+                echo chr(9) . 'Converted image size: ' . $conversion_data['new_filesize'] . chr(10);
+                echo chr(9) . 'Compression ratio: ' . $conversion_data['compression_ratio'] . chr(10);
+                echo chr(9) . 'Base64 webp image length: ' . strlen($conversion_data['webp_image_base64']) . chr(10);
+            } else {
+                // this image has not been converted due to an error.
+                // the error reason is inside ['error']
+                echo 'Conversion ERROR for image ' . $conversion_data['filename'] . chr(10);
+                echo chr(9) . 'Error reason: ' . $conversion_data['error'] . chr(10);
+            }
+        }
+    } else {
+        // an application error occurred while calling the conversion API: report it.
+        trigger_error('Cannot run imageToWebpApi: ' . $webp_images['error'], E_USER_NOTICE);
+    }
+
+    function imageToWebpApi(string $api_url, string $api_key, array $images) : array
+    {
+        // Create an array of files to post via cUrl and the file descriptors
+        $postData = $descriptors = [];
+        foreach ($images as $index => $file_data) {
+            if (is_file($file_data['path'])) {
+                $realpath = realpath($file_data['path']);
+                $mime = mime_content_type($file_data['path']);
+                $basename = basename($file_data['path']);
+
+                $postData['images[' . $index . ']'] = curl_file_create(
+                    $realpath,
+                    $mime,
+                    $basename
+                );
+
+                unset($file_data['path']);
+                $file_data['filename'] = $basename;
+                $descriptors[] = $file_data;
+            }
+        }
+
+        // append the descriptors json object to POST data
+        $postData['descriptors'] = json_encode($descriptors);
+
+        $ch = curl_init($api_url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            '-x-api-key: ' , $api_key,
+            'User-Agent: PHP cUrl connector for MWEBP'
+        ]);
+        $ret = curl_exec($ch);
+        $status_code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+
+        if (
+            ($decoded = @json_decode($ret, true)) !== null &&
+            is_array($decoded) &&
+            $status_code === 200 &&
+            array_key_exists('response', $decoded)
+        ) {
+            return [
+                'status' => true,
+                'response' => $decoded['response']
+            ];
+        } else {
+            if (is_array($decoded) && array_key_exists('message', $decoded)) {
+                $error_message = $decoded['message'];
+            } else {
+                $error_message = 'Unknown error with HTTP_RESPONSE_CODE="' . $status_code . '"';
+            }
+
+            return [
+                'status' => false,
+                'error' => $error_message
+            ];
+        }
+    }
+```
+
+The above example will print something like this:
+
+```
+Conversion OK for image image1.jpg
+	Original image size: 362.08kB
+	Converted image size: 58.94kB
+	Compression ratio: 83.72
+	Base64 webp image length: 80476
+Conversion OK for image image2.jpg
+	Original image size: 1.41MB
+	Converted image size: 119.54kB
+	Compression ratio: 91.69
+	Base64 webp image length: 163220
+Conversion ERROR for image not_an_image.iso
+	Error reason: This file extension is not allowed
+```

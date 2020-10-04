@@ -275,7 +275,7 @@
         exit();
     }
 
-    function human_filesize($size, $precision = 2)
+    function human_filesize(float $size, int $precision = 2) : string
     {
         for ($i = 0; ($size / 1024) > 0.9; $i++, $size /= 1024) {
         }
