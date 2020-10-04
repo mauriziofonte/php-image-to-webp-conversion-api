@@ -1,10 +1,10 @@
 # PHP "Image to WEPB" JSON API Microservice
 
-A simple JSON **PHP microservice** that can be used to convert images in jpeg, png, (or any other image format) to **webp** via a simple API, with **conversion options**
+A simple JSON **PHP microservice** that can be used to convert input images like jpeg, png, (or any other image format) to **webp** via a simple API, with custom **conversion options**
 
 Why a "stupid" microservice like this? Because **in conversion to webp format, you need exec() to be called** in order to use the **cwebp** conversion binary in a linux machine. The `exec()` function is not always allowed on all hosting services (think about shared hostings), and my personal choice is to **disable it** on production websites.
 
-Hence, an external microservice come helpful. **You can "outsource" the conversion stuff to another machine**, and keep the main repository (and lamp environment) clean.
+Hence, an external microservice come helpful. **You can "outsource" the conversion stuff to another machine**, and keep the main repository/project that actually uses WEBP images (and its lamp environment) clean and secured.
 
 ## Requirements
 
