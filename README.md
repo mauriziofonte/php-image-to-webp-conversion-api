@@ -1,90 +1,84 @@
-# PHP "Image to WEPB" JSON API Microservice
+# PHP "Image to WEBP" JSON API Microservice
 
-A simple JSON **PHP microservice** that can be used to convert input images like jpeg, png, (or any other image format) to **webp** via a simple API, with custom **conversion options**
+A simple PHP microservice that converts input images (JPEG, PNG, or any other image format) to **WEBP** using a JSON API with custom conversion options.
 
-Why a "stupid" microservice like this? Because **in conversion to webp format, you need exec() to be called** in order to use the **cwebp** conversion binary in a linux machine. The `exec()` function is not always allowed on all hosting services (think about shared hostings), and my personal choice is to **disable it** on production websites.
+## Why Use This Microservice?
 
-Hence, an external microservice come helpful. **You can "outsource" the conversion stuff to another machine**, and keep the main repository/project that actually uses WEBP images (and its lamp environment) clean and secured.
+Converting images to WEBP format often requires the `exec()` function to call the `cwebp` binary on a Linux machine. However, `exec()` is not always permitted on all hosting services (e.g., shared hosting), and it's a common practice to disable it on production websites for security reasons.
+
+By using this external microservice, you can **offload the conversion process to another machine**, keeping your main application and environment clean and secure.
 
 ## Requirements
 
-1.  Lamp environment, with mod_rewrite (or similar) enabled
-2.  **HTTPS** enabled on your virtualhost
-3.  PHP >= **5.6**
-4.  **cwebp** binary installed on your machine
-5.  **exec()** function enabled on your php.ini
+1. LAMP environment with `mod_rewrite` (or similar) enabled.
+2. **HTTPS** enabled on your virtual host.
+3. PHP version **5.6** or higher.
+4. **cwebp** binary installed on your machine.
+5. **exec()** function enabled in your `php.ini`.
 
 ## Installation
 
-1.  Clone this repository inside an already-existing virtualhost in a folder of your choice
-2.  Install **the cwebp binary** on your environment. On ubuntu/debian: `sudo apt install webp`
-3.  Clone the `.env.example` file in `.env`
-4.  No composer install, this script doesn't need anything else :)
-5.  (optional) If installed inside another git project, modify your parent `.gitignore` to avoid conflicts on your parent repository
+1. Clone this repository into a directory within your existing virtual host.
+2. Install the **cwebp** binary on your environment. On Ubuntu/Debian: `sudo apt install webp`.
+3. Copy `.env.example` to `.env` and configure it as needed.
+4. No Composer installation is required for this script.
+5. _(Optional)_ If installed inside another Git project, modify your parent `.gitignore` to avoid conflicts.
 
-## How to configure the env file
+## Configuring the `.env` File
 
-1.  **SCRIPT_NAME** : this will be the script name that will be whitelisted to allow replies from the microservice
-2.  **API_KEY** : this will be the api key that needs to be sent out via the `-x-api-key` header
+* **SCRIPT\_NAME**: The endpoint name that will be whitelisted to allow requests to the microservice.
+* **API\_KEY**: The API key that must be provided via the `X-API-Key` header.
 
-Example:
+**Example:**
 
-Imagine this microservice is installed inside an already-existing project, inside a folder of his own, called **webp-converter**:
+If the microservice is installed at `https://www.example.com/webp-converter/` and your `.env` contains:
 
-https://www.example.com/webp-converter/
+makefile
 
-```
-SCRIPT_NAME = "convert-now"
-```
+Copia codice
 
-The application will reply **only if** called from `https://www.example.com/webp-converter/convert-now`
+`SCRIPT_NAME="convert-now"`
 
-## How to pass converter options
+The application will respond **only** to requests made to `https://www.example.com/webp-converter/convert-now`.
 
-Currently available options (1:1 with the cwebp binary)
+## Passing Conversion Options
 
-1.  **pass** : **analysis pass number**, integer, range : 1-10
-2.  **m** : **compression method**, integer, range: 1-6
-3.  **lossless** : **encode image losslessly**, to set it **ON** you can pass `1` or `true`
-4.  **near_lossless** : **use near-lossless image preprocessing**, integer, range: 0-100. 100 = OFF
-5.  **hint** : **specify image characteristics hint**, available values: one of: `photo`, `picture` or `graph`
-6.  **jpeg_like** : **roughly match expected JPEG size**, integer, range: 1-100
+Available options (mapped directly to `cwebp` binary options):
 
-## What the converter expects
+1. **pass**: Analysis pass number (integer, range: 1-10).
+2. **m**: Compression method (integer, range: 0-6).
+3. **lossless**: Encode image losslessly (`1` or `true` to enable).
+4. **near\_lossless**: Use near-lossless image preprocessing (integer, range: 0-100; 100 = OFF).
+5. **hint**: Specify image characteristics hint (`photo`, `picture`, or `graph`).
+6. **jpeg\_like**: Roughly match expected JPEG size (integer, range: 1-100).
 
-It expects:
+## What the Converter Expects
 
-1.  A valid api key sent via the **-x-api-key** header
-2.  An `images[]` array of multipart form-data images (that can be read and parsed with PHP's native `$_FILES`)
-3.  (optionally) a `descriptors` JSON that will be used to map the image filenames to custom data you choose.
+* A valid API key sent via the `X-API-Key` header.
+* An `images[]` array of multipart form-data images (accessible via PHP's `$_FILES`).
+* _(Optional)_ A `descriptors` JSON object to map image filenames to custom data.
 
-## Map the images to custom data you choose
+## Mapping Images to Custom Data
 
-If you want to map the images you send with **machine data**, say, you want to map the image filename `test-image.jpg` to a `file_id`, you can send a special `descriptors` key, **in json format**, that will be "mixed" with the convertion output.
+You can associate each image with custom data using the `descriptors` key, which should be a JSON array. This data will be included in the response, allowing you to correlate images with your application's data.
 
-More complicated to explain in words than to see it in action: refer to the **example curl request** and **example curl response**. Pay attention to the **descriptors** key, and pay attention to `extra_data`, `arbitrary_data` and `file_id`
+Refer to the **example curl request** and **example response** below.
 
-## Example curl request
+## Example Curl Request
 
-The microservice accepts only requests made via **https** protocol, to the whitelisted **SCRIPT_NAME** .env configuration, with a valid **API_KEY** provided in the `-x-api-key` header.
-
-```
+```bash
 curl --location --request POST 'https://www.example.com/webp-converter/convert-now' \
---header '-x-api-key: averysecretapikey' \
---form 'images[]=@/C:/Users/User/Pictures/Wallpaper/wallpaper_1.jpg' \
---form 'images[]=@/C:/Users/User/Pictures/Wallpaper/wallpaper_2.jpg' \
---form 'images[]=@/C:/Users/User/Pictures/Wallpaper/wallpaper_3.jpg' \
---form 'images[]=@/C:/Users/User/not_an_image.xls' \
---form 'descriptors=[{"filename":"wallpaper_1.jpg","file_id":"1","extra_data":"this is the first image in the array"},{"filename":"wallpaper_2.jpg","file_id":"arbitrary_data","description":"Another wonderful image"},{"filename":"wallpaper_3.jpg","file_id":"27726629911"}]'
+--header 'X-API-Key: averysecretapikey' \
+--form 'images[]=@/path/to/wallpaper_1.jpg' \
+--form 'images[]=@/path/to/wallpaper_2.jpg' \
+--form 'images[]=@/path/to/wallpaper_3.jpg' \
+--form 'images[]=@/path/to/not_an_image.xls' \
+--form 'descriptors=[{"filename":"wallpaper_1.jpg","file_id":"1","extra_data":"First image"},{"filename":"wallpaper_2.jpg","file_id":"2","description":"Second image"},{"filename":"wallpaper_3.jpg","file_id":"3"}]'
 ```
 
-## Example response
+## Example Response
 
-The application will always reply with a JSON object.
-
-Valid images that have been converted will have a `status` = **true** in the response payload. Also, the `webp_image_base64` will be **null** for unprocessable entities.
-
-```
+```json
 {
     "status": true,
     "version": "1.0.0",
@@ -93,187 +87,160 @@ Valid images that have been converted will have a `status` = **true** in the res
         {
             "filename": "wallpaper_1.jpg",
             "file_id": "1",
-            "extra_data": "this is the first image in the array",
+            "extra_data": "First image",
             "status": true,
             "orig_filesize": "375.5kB",
             "new_filesize": "146.8kB",
             "compression_ratio": 60.9,
-            "webp_image_base64" : " ... base64 encoded wallpaper_1.jpg in webp format ..."
+            "webp_image_base64": " ... base64 encoded image ..."
         },
         {
             "filename": "wallpaper_2.jpg",
-            "file_id": "arbitrary_data",
-            "description": "Another wonderful image",
+            "file_id": "2",
+            "description": "Second image",
             "status": true,
             "orig_filesize": "323.39kB",
             "new_filesize": "271.41kB",
             "compression_ratio": 16.07,
-            "webp_image_base64" : " ... base64 encoded wallpaper_2.jpg in webp format ..."
+            "webp_image_base64": " ... base64 encoded image ..."
         },
         {
             "filename": "wallpaper_3.jpg",
-            "file_id": "27726629911",
+            "file_id": "3",
             "status": true,
             "orig_filesize": "695.49kB",
             "new_filesize": "52.1kB",
             "compression_ratio": 92.51,
-            "webp_image_base64" : " ... base64 encoded wallpaper_3.jpg in webp format ..."
+            "webp_image_base64": " ... base64 encoded image ..."
         },
         {
             "filename": "not_an_image.xls",
-            "error": "This file extension is not allowed",
+            "error": "Unsupported file extension.",
             "status": false
         }
     ]
 }
 ```
 
-## Application errors
+## Application Errors
 
-If, for some reason, the application cannot serve your request, the response will be something like this:
+If the application cannot process your request, the response will include a `status` of `false` and an error `message`. An appropriate HTTP status code (e.g., **401 Unauthorized**) will also be returned.
 
-```
+```json
 {
     "status": false,
     "version": "1.0.0",
-    "message": "Invalid api key provided."
+    "message": "Invalid API key provided."
 }
 ```
 
-So, always check for the **status** key on the root object in the response payload.
+Always check the **status** key in the root object of the response payload.
 
-For any application-level error, like **Invalid api key provided**, an http status code error, like **401 unauthorized** will be sent out with the response.
+## Full PHP Implementation Example
 
-## Full PHP implementation example
-
-A full PHP implementation example of how to use the API via PHP is provided:
-
-```
+```php
 <?php
-    $images = [
-        [
-            'path' => '/home/user/files/image1.jpg',
-            'file_id' => 1,
-            'description' => 'First Image'
-        ],
-        [
-            'path' => '/home/user/files/image2.jpg',
-            'file_id' => 2,
-            'description' => 'Second Image'
-        ],
-        [
-            'path' => '/home/user/files/not_an_image.iso',
-            'file_id' => 5,
-            'description' => 'Invalid Image'
-        ]
-    ];
+$images = [
+    [
+        'path' => '/home/user/files/image1.jpg',
+        'file_id' => 1,
+        'description' => 'First Image'
+    ],
+    [
+        'path' => '/home/user/files/image2.jpg',
+        'file_id' => 2,
+        'description' => 'Second Image'
+    ],
+    [
+        'path' => '/home/user/files/not_an_image.iso',
+        'file_id' => 5,
+        'description' => 'Invalid Image'
+    ]
+];
 
-    // call the imageToWebpApi() function
-    $webp_images = imageToWebpApi('https://my-api-server.example.com/converter', 'VERY_STRONG_API_KEY', $images);
-    if ($webp_images['status'] === true) {
-        foreach ($webp_images['response'] as $i => $conversion_data) {
-            // IMPORTANT: keep in mind that every "$conversion_data" item contains the custom keys
-            // provided in this example as "file_id" and "description", transparently
-            // passed back out from the API
-            if ($conversion_data['status'] === true) {
-                // ok, the image has been converted correctly.
-                // do whatever you need with the image (save to file perhaps? :))
+$webp_images = imageToWebpApi('https://my-api-server.example.com/converter', 'VERY_STRONG_API_KEY', $images);
 
-                echo 'Conversion OK for image ' . $conversion_data['filename'] . chr(10);
-                echo chr(9) . 'Original image size: ' . $conversion_data['orig_filesize'] . chr(10);
-                echo chr(9) . 'Converted image size: ' . $conversion_data['new_filesize'] . chr(10);
-                echo chr(9) . 'Compression ratio: ' . $conversion_data['compression_ratio'] . chr(10);
-                echo chr(9) . 'Base64 webp image length: ' . strlen($conversion_data['webp_image_base64']) . chr(10);
-            } else {
-                // this image has not been converted due to an error.
-                // the error reason is inside ['error']
-                echo 'Conversion ERROR for image ' . $conversion_data['filename'] . chr(10);
-                echo chr(9) . 'Error reason: ' . $conversion_data['error'] . chr(10);
-            }
-        }
-    } else {
-        // an application error occurred while calling the conversion API: report it.
-        trigger_error('Cannot run imageToWebpApi: ' . $webp_images['error'], E_USER_NOTICE);
-    }
-
-    function imageToWebpApi(string $api_url, string $api_key, array $images) : array
-    {
-        // Create an array of files to post via cUrl and the file descriptors
-        $postData = $descriptors = [];
-        foreach ($images as $index => $file_data) {
-            if (is_file($file_data['path'])) {
-                $realpath = realpath($file_data['path']);
-                $mime = mime_content_type($file_data['path']);
-                $basename = basename($file_data['path']);
-
-                $postData['images[' . $index . ']'] = curl_file_create(
-                    $realpath,
-                    $mime,
-                    $basename
-                );
-
-                unset($file_data['path']);
-                $file_data['filename'] = $basename;
-                $descriptors[] = $file_data;
-            }
-        }
-
-        // append the descriptors json object to POST data
-        $postData['descriptors'] = json_encode($descriptors);
-
-        $ch = curl_init($api_url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            '-x-api-key: ' , $api_key,
-            'User-Agent: PHP cUrl connector for MWEBP'
-        ]);
-        $ret = curl_exec($ch);
-        $status_code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-
-        if (
-            ($decoded = @json_decode($ret, true)) !== null &&
-            is_array($decoded) &&
-            $status_code === 200 &&
-            array_key_exists('response', $decoded)
-        ) {
-            return [
-                'status' => true,
-                'response' => $decoded['response']
-            ];
+if ($webp_images['status'] === true) {
+    foreach ($webp_images['response'] as $conversion_data) {
+        if ($conversion_data['status'] === true) {
+            echo 'Conversion OK for image ' . $conversion_data['filename'] . PHP_EOL;
+            echo 'Original image size: ' . $conversion_data['orig_filesize'] . PHP_EOL;
+            echo 'Converted image size: ' . $conversion_data['new_filesize'] . PHP_EOL;
+            echo 'Compression ratio: ' . $conversion_data['compression_ratio'] . '%' . PHP_EOL;
+            echo 'Base64 image length: ' . strlen($conversion_data['webp_image_base64']) . PHP_EOL;
         } else {
-            if (is_array($decoded) && array_key_exists('message', $decoded)) {
-                $error_message = $decoded['message'];
-            } else {
-                $error_message = 'Unknown error with HTTP_RESPONSE_CODE="' . $status_code . '"';
-            }
-
-            return [
-                'status' => false,
-                'error' => $error_message
-            ];
+            echo 'Conversion ERROR for image ' . $conversion_data['filename'] . PHP_EOL;
+            echo 'Error reason: ' . $conversion_data['error'] . PHP_EOL;
         }
     }
+} else {
+    trigger_error('Cannot run imageToWebpApi: ' . $webp_images['error'], E_USER_NOTICE);
+}
+
+function imageToWebpApi(string $api_url, string $api_key, array $images): array
+{
+    $postData = [];
+    $descriptors = [];
+
+    foreach ($images as $index => $file_data) {
+        if (is_file($file_data['path'])) {
+            $realpath = realpath($file_data['path']);
+            $mime = mime_content_type($file_data['path']);
+            $basename = basename($file_data['path']);
+
+            $postData['images[' . $index . ']'] = new CURLFile($realpath, $mime, $basename);
+
+            unset($file_data['path']);
+            $file_data['filename'] = $basename;
+            $descriptors[] = $file_data;
+        }
+    }
+
+    $postData['descriptors'] = json_encode($descriptors);
+
+    $ch = curl_init($api_url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'X-API-Key: ' . $api_key,
+        'User-Agent: PHP cURL connector for Image to WEBP API'
+    ]);
+
+    $response = curl_exec($ch);
+    $status_code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode($response, true);
+
+    if ($decoded !== null && isset($decoded['response']) && $status_code === 200) {
+        return [
+            'status' => true,
+            'response' => $decoded['response']
+        ];
+    } else {
+        $error_message = $decoded['message'] ?? 'Unknown error with HTTP status code ' . $status_code;
+        return [
+            'status' => false,
+            'error' => $error_message
+        ];
+    }
+}
 ```
 
-The above example will print something like this:
+**Sample Output:**
 
-```
+```txt
 Conversion OK for image image1.jpg
-	Original image size: 362.08kB
-	Converted image size: 58.94kB
-	Compression ratio: 83.72
-	Base64 webp image length: 80476
+Original image size: 362.08kB
+Converted image size: 58.94kB
+Compression ratio: 83.72%
+Base64 image length: 80476
 Conversion OK for image image2.jpg
-	Original image size: 1.41MB
-	Converted image size: 119.54kB
-	Compression ratio: 91.69
-	Base64 webp image length: 163220
+Original image size: 1.41MB
+Converted image size: 119.54kB
+Compression ratio: 91.69%
+Base64 image length: 163220
 Conversion ERROR for image not_an_image.iso
-	Error reason: This file extension is not allowed
+Error reason: Unsupported file extension.
 ```

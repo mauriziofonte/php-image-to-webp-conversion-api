@@ -1,371 +1,255 @@
 <?php
-    error_reporting(0);
-    ini_set('display_errors', 'Off');
-    $init_time = microtime(true);
 
-    // define some useful stuff
-    define('DS', DIRECTORY_SEPARATOR);
-    define('RD', rtrim(dirname(__FILE__), DS) . DS);
-    define('CONFIG_FILE', RD . '.env');
-    define('VERSION', '1.0.0');
-    define('TEMP_DIR', RD . 'temp' . DS);
-    define(
-        'IS_HTTPS',
-        (
-            (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ||
-            (isset($_SERVER['SERVER_PORT']) && intval($_SERVER['SERVER_PORT']) === 443) ||
-            (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
-            (isset($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] === 'https')
-        ) ? true : false
-    );
-    define('FROM_CLI', (php_sapi_name() === 'cli' or defined('STDIN')) ? true : false);
+declare(strict_types=1);
 
-    // 1: preliminary checks, config load, API_KEY check, CWEBP binary locator
-    preFlightChecksAndInit();
+error_reporting(E_ALL);
+ini_set('display_errors', 'On');
 
-    // 2: then, we parse the compression options passed via $_GET
-    $cwebp_analysis_pass = (
-        array_key_exists('pass', $_GET) &&
-        is_numeric($_GET['pass']) &&
-        intval($_GET['pass']) >= 1 &&
-        intval($_GET['pass']) <= 10
-    ) ? intval($_GET['pass']) : null;
-    $cwebp_compression = (
-        array_key_exists('m', $_GET) &&
-        is_numeric($_GET['m']) &&
-        intval($_GET['m']) >= 0 &&
-        intval($_GET['m']) <= 6
-    ) ? intval($_GET['m']) : 4;
-    $cwebp_lossless = (
-        array_key_exists('lossless', $_GET) &&
-        in_array($_GET['lossless'], [1, '1', 'true'])
-    ) ? true : false;
-    $cwebp_near_lossless = (
-        array_key_exists('near_lossless', $_GET) &&
-        is_numeric($_GET['near_lossless']) &&
-        intval($_GET['near_lossless']) >= 0 &&
-        intval($_GET['near_lossless']) <= 100
-    ) ? intval($_GET['near_lossless']) : null;
-    $cwebp_hint = (
-        array_key_exists('hint', $_GET) &&
-        in_array($_GET['hint'], ['photo', 'picture', 'graph'])
-    ) ? $_GET['hint'] : null;
-    $cwebp_jpeg_like = (
-        array_key_exists('jpeg_like', $_GET) &&
-        is_numeric($_GET['jpeg_like']) &&
-        intval($_GET['jpeg_like']) >= 0 &&
-        intval($_GET['jpeg_like']) <= 100
-    ) ? intval($_GET['jpeg_like']) : null;
-    
-    // 3: see if we have the "descriptors" key in the request payload:
-    // if so, parse it, so we can mix&match it with the response afterwards
-    $request_descriptors = [];
-    if (
-        array_key_exists('descriptors', $_POST) &&
-        ($raw_descriptors = @json_decode($_POST['descriptors'], true)) !== null &&
-        is_array($raw_descriptors)
-    ) {
-        foreach ($raw_descriptors as $i => $rd) {
-            if (array_key_exists('filename', $rd)) {
-                $filename = trim($rd['filename']);
-                unset($rd['filename']);
+define('VERSION', '1.0.0');
+define('TEMP_DIR', __DIR__ . DIRECTORY_SEPARATOR . 'temp' . DIRECTORY_SEPARATOR);
 
-                // remove keys that are used by us in the conversion part of the script
-                if (array_key_exists('processable', $rd)) {
-                    unset($rd['processable']);
-                }
-                if (array_key_exists('error', $rd)) {
-                    unset($rd['error']);
-                }
-                if (array_key_exists('tempfile', $rd)) {
-                    unset($rd['tempfile']);
-                }
+if (php_sapi_name() === 'cli') {
+    exit('This service can only be accessed via HTTP.');
+}
 
-                // the md5() on the filename is to avoid malicious things done with array keys, on
-                // maliciously-crafted filenames
-                $request_descriptors[md5($filename)] = $rd;
-            }
-        }
+if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
+    http_response_code(400);
+    outputError('HTTPS is required.');
+}
+
+$config = parse_ini_file(__DIR__ . DIRECTORY_SEPARATOR . '.env');
+if ($config === false) {
+    outputError('Configuration file not found or invalid.');
+}
+
+$headers = getallheaders();
+$apiKey = $headers['X-API-Key'] ?? null;
+if ($apiKey !== $config['API_KEY']) {
+    http_response_code(401);
+    outputError('Invalid API key provided.');
+}
+
+$requestUri = $_SERVER['REQUEST_URI'];
+$scriptName = basename(parse_url($requestUri, PHP_URL_PATH));
+if ($scriptName !== $config['SCRIPT_NAME']) {
+    http_response_code(400);
+    outputError('Invalid endpoint.');
+}
+
+$cwebpBinary = trim(shell_exec('which cwebp'));
+if (empty($cwebpBinary)) {
+    outputError('cwebp binary not found. Install it using "sudo apt install webp" on Ubuntu/Debian.');
+}
+
+if (!is_dir(TEMP_DIR) && !mkdir(TEMP_DIR, 0755, true)) {
+    outputError('Failed to create temporary directory.');
+}
+
+if (empty($_FILES['images']['name'])) {
+    outputError('No images uploaded.');
+}
+
+$descriptors = [];
+if (!empty($_POST['descriptors'])) {
+    $descriptors = json_decode($_POST['descriptors'], true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        outputError('Invalid descriptors JSON.');
+    }
+}
+
+$response = [];
+$startTime = microtime(true);
+
+foreach ($_FILES['images']['name'] as $key => $filename) {
+    $error = $_FILES['images']['error'][$key];
+    $tmpName = $_FILES['images']['tmp_name'][$key];
+    $descriptor = getDescriptor($filename, $descriptors);
+
+    if ($error !== UPLOAD_ERR_OK) {
+        $response[] = array_merge($descriptor, [
+            'filename' => $filename,
+            'status' => false,
+            'error' => fileUploadError($error),
+        ]);
+        continue;
     }
 
-    // 4: parse the images in $_FILES and create a map of processable entities
-    $request_files = [];
-    foreach ($_FILES['images']['name'] as $file_index => $upload_name) {
-        $upload_error = $_FILES['images']['error'][$file_index];
-        $upload_size = $_FILES['images']['size'][$file_index];
-        $upload_tmp_name = $_FILES['images']['tmp_name'][$file_index];
-        $upload_type = $_FILES['images']['type'][$file_index];
-        $upload_descriptor = md5(trim($upload_name));
-        $upload_extension = strtolower(pathinfo($upload_name, PATHINFO_EXTENSION));
-        $descriptor = (array_key_exists($upload_descriptor, $request_descriptors)) ? $request_descriptors[$upload_descriptor] : [];
-
-        // Returns TRUE if the file named by filename was uploaded via HTTP POST.
-        // This is useful to help ensure that a malicious user hasn't tried to trick
-        // the script into working onfiles upon which it should not be working--for instance, /etc/passwd.
-        if (is_uploaded_file($upload_tmp_name) === false) {
-            $temp = [
-                'processable' => false,
-                'filename' => $upload_name,
-                'error' => 'Cannot process a fake uploaded file'
-            ];
-            $temp = array_merge($temp, $descriptor);
-            $request_files[] = $temp;
-            continue;
-        }
-
-        // filter out all input files that are not an image (stupid, but serves to remove bad stuff)
-        if (!in_array($upload_extension, ['jpg', 'jpeg', 'bmp', 'png', 'gif'])) {
-            $temp = [
-                'processable' => false,
-                'filename' => $upload_name,
-                'error' => 'This file extension is not allowed'
-            ];
-            $temp = array_merge($temp, $descriptor);
-            $request_files[] = $temp;
-            continue;
-        }
-        
-        if ($upload_error === UPLOAD_ERR_OK) {
-            $tempfile = TEMP_DIR . md5(microtime().rand(111111, 999999)) . '.' . $upload_extension;
-            if (move_uploaded_file($upload_tmp_name, $tempfile)) {
-                $temp = [
-                    'processable' => true,
-                    'filename' => $upload_name,
-                    'tempfile' => $tempfile
-                ];
-                $temp = array_merge($temp, $descriptor);
-                $request_files[] = $temp;
-                continue;
-            } else {
-                $temp = [
-                    'processable' => false,
-                    'filename' => $upload_name,
-                    'error' => 'Cannot move the upload file to the temporary process directory'
-                ];
-                $temp = array_merge($temp, $descriptor);
-                $request_files[] = $temp;
-                continue;
-            }
-        } else {
-            $errmessage = 'Unknown error';
-            switch ($upload_error) {
-                case UPLOAD_ERR_INI_SIZE:
-                    $errmessage = 'The uploaded file exceeds the upload_max_filesize directive in php.ini';
-                break;
-                case UPLOAD_ERR_FORM_SIZE:
-                    $errmessage = 'The uploaded file exceeds the MAX_FILE_SIZE directiveof the origin form';
-                break;
-                case UPLOAD_ERR_PARTIAL:
-                    $errmessage = 'The uploaded file was only partially uploaded';
-                break;
-                case UPLOAD_ERR_NO_FILE:
-                    $errmessage = 'No file was uploaded';
-                break;
-                case UPLOAD_ERR_NO_TMP_DIR:
-                    $errmessage = 'Missing a temporary folder';
-                break;
-                case UPLOAD_ERR_CANT_WRITE:
-                    $errmessage = 'Failed to write file to disk';
-                break;
-                case UPLOAD_ERR_EXTENSION:
-                    $errmessage = 'A PHP extension stopped the file upload';
-                break;
-            }
-            $temp = [
-                'processable' => false,
-                'filename' => $upload_name,
-                'error' => $errmessage
-            ];
-            $temp = array_merge($temp, $descriptor);
-            $request_files[] = $temp;
-            continue;
-        }
+    $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'bmp'], true)) {
+        $response[] = array_merge($descriptor, [
+            'filename' => $filename,
+            'status' => false,
+            'error' => 'Unsupported file extension.',
+        ]);
+        continue;
     }
 
-    // 5: process the "processable" entities on $request_files
-    $process_output = [];
-    foreach ($request_files as $i => $rf) {
-        if ($rf['processable']) {
-            // create the command line for this conversion
-            $outfile = TEMP_DIR . md5(microtime().rand(111111, 999999)) . '.webp';
-            $command = CWEBP_BINARY . ' -m ' . $cwebp_compression;
-            if ($cwebp_analysis_pass) {
-                $command .= $command . ' -pass ' . $cwebp_analysis_pass;
-            }
-            if ($cwebp_lossless) {
-                $command .= $command . ' -lossless';
-            }
-            if ($cwebp_near_lossless) {
-                $command .= $command . ' -near_lossless ' . $cwebp_near_lossless;
-            }
-            if ($cwebp_hint) {
-                $command .= $command . ' -hint ' . $cwebp_hint;
-            }
-            if ($cwebp_jpeg_like) {
-                $command .= $command . ' -jpeg_like ' . $cwebp_jpeg_like;
-            }
-            $command .= ' -mt -quiet "' . $rf['tempfile'] . '" -o "' . $outfile . '"';
-
-            // exec the command
-            $bash_output = [];
-            $retvar = exec($command, $bash_output);
-            if (is_file($outfile)) {
-                // ok, we're done!
-                $orig_filesize = filesize($rf['tempfile']);
-                $new_filesize = filesize($outfile);
-                $compression_ratio = round((($orig_filesize-$new_filesize)/$orig_filesize)*100, 2);
-                $rf['status'] = true;
-                $rf['orig_filesize'] = human_filesize($orig_filesize);
-                $rf['new_filesize'] = human_filesize($new_filesize);
-                $rf['compression_ratio'] = $compression_ratio;
-                $rf['webp_image_base64'] = @base64_encode(file_get_contents($outfile));
-            } else {
-                // an error occurred during conversion :(
-                $rf['status'] = false;
-                $rf['error'] = 'Cannot compress the image with cwebp';
-            }
-
-            if (is_file($rf['tempfile'])) {
-                @unlink($rf['tempfile']);
-            }
-            if (is_file($outfile)) {
-                @unlink($outfile);
-            }
-            
-            // cleanup the item array
-            unset($rf['tempfile']);
-            unset($rf['processable']);
-
-            // append the item status data to the response
-            $process_output[] = $rf;
-        } else {
-            // append the "unprocessable" item status data to the response
-            unset($rf['processable']);
-            $rf['status'] = false;
-            $rf['webp_image_base64'] = null;
-            $process_output[] = $rf;
-        }
+    $tempFile = TEMP_DIR . uniqid('', true) . '.' . $extension;
+    if (!move_uploaded_file($tmpName, $tempFile)) {
+        $response[] = array_merge($descriptor, [
+            'filename' => $filename,
+            'status' => false,
+            'error' => 'Failed to move uploaded file.',
+        ]);
+        continue;
     }
 
-    // 6: finally, print out the response json
-    output(true, ['response' => $process_output]);
-    
-    function output(bool $status, ?array $data = null, ?int $status_code = null)
-    {
-        global $init_time;
+    $outputFile = TEMP_DIR . uniqid('', true) . '.webp';
+    $command = escapeshellcmd($cwebpBinary) . ' -quiet';
 
-        $return_array = ['status' => false, 'version' => VERSION];
-        if ($status) {
-            $end_time = microtime(true);
-            $return_array['status'] = true;
-            $return_array['elapsed_time'] = round($end_time - $init_time, 2) . 's';
-        }
-        if (!empty($data)) {
-            $return_array = array_merge($return_array, $data);
-        }
-        
-        header_remove();
-        if ($status_code) {
-            http_response_code($status_code);
-        }
-        header('Content-Type: application/json');
-        header('Content-Encoding: UTF-8');
-        echo json_encode($return_array, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        
-        exit();
+    $command .= buildConversionOptions($_GET);
+
+    $command .= ' ' . escapeshellarg($tempFile) . ' -o ' . escapeshellarg($outputFile);
+
+    exec($command, $cmdOutput, $returnVar);
+
+    if ($returnVar !== 0 || !file_exists($outputFile)) {
+        $response[] = array_merge($descriptor, [
+            'filename' => $filename,
+            'status' => false,
+            'error' => 'Conversion failed.',
+        ]);
+        @unlink($tempFile);
+        continue;
     }
 
-    function human_filesize(float $size, int $precision = 2) : string
-    {
-        for ($i = 0; ($size / 1024) > 0.9; $i++, $size /= 1024) {
+    $webpData = base64_encode(file_get_contents($outputFile));
+    $origSize = filesize($tempFile);
+    $newSize = filesize($outputFile);
+    $compressionRatio = round((($origSize - $newSize) / $origSize) * 100, 2);
+
+    $response[] = array_merge($descriptor, [
+        'filename' => $filename,
+        'status' => true,
+        'orig_filesize' => formatBytes($origSize),
+        'new_filesize' => formatBytes($newSize),
+        'compression_ratio' => $compressionRatio,
+        'webp_image_base64' => $webpData,
+    ]);
+
+    @unlink($tempFile);
+    @unlink($outputFile);
+}
+
+$elapsedTime = round(microtime(true) - $startTime, 2) . 's';
+outputJson([
+    'status' => true,
+    'version' => VERSION,
+    'elapsed_time' => $elapsedTime,
+    'response' => $response,
+]);
+
+/**
+ * Outputs an error message in JSON format and terminates the script.
+ *
+ * @param string $message The error message to output.
+ * @return void
+ */
+function outputError(string $message): void
+{
+    outputJson(['status' => false, 'version' => VERSION, 'message' => $message]);
+}
+
+/**
+ * Outputs a JSON-encoded response and terminates the script.
+ *
+ * @param array $data The data to encode and output as JSON.
+ * @return void
+ */
+function outputJson(array $data): void
+{
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+/**
+ * Retrieves the descriptor associated with a given filename.
+ *
+ * @param string $filename    The name of the file to find the descriptor for.
+ * @param array  $descriptors An array of descriptors to search.
+ * @return array The descriptor associated with the filename, or an empty array if not found.
+ */
+function getDescriptor(string $filename, array $descriptors): array
+{
+    foreach ($descriptors as $descriptor) {
+        if (isset($descriptor['filename']) && $descriptor['filename'] === $filename) {
+            return $descriptor;
         }
-        return round($size, $precision).['B','kB','MB','GB','TB','PB','EB','ZB','YB'][$i];
+    }
+    return [];
+}
+
+/**
+ * Builds the command-line options string for the cwebp conversion command based on provided parameters.
+ *
+ * @param array $params The array of parameters (e.g., $_GET) containing conversion options.
+ * @return string The command-line options string for cwebp.
+ */
+function buildConversionOptions(array $params): string
+{
+    $options = '';
+
+    if (isset($params['pass']) && filter_var($params['pass'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 10]])) {
+        $options .= ' -pass ' . (int)$params['pass'];
     }
 
-    function preFlightChecksAndInit() : void
-    {
-        if (FROM_CLI) {
-            die('This service can only be served from a LAMP environment (Apache/Nginx/etc). Nothing to do via CLI.');
-        }
-        if (!IS_HTTPS) {
-            output(false, [
-                'message' => 'Cannot proceed without HTTPS enabled. Please, enable HTTPS support on this virtual host.'
-            ], 400);
-        }
-        if (!is_file(CONFIG_FILE)) {
-            output(false, [
-                'message' => 'Cannot file config file. Please, make sure to follow the installation instructions.'
-            ], 503);
-        }
-        if (($config = parse_ini_file(CONFIG_FILE)) === false) {
-            output(false, [
-                'message' => 'The config file could not be parsed. Check the syntax of the config file.'
-            ], 503);
-        } else {
-            foreach ($config as $key => $val) {
-                // make the .env config key available
-                // skip if the $val is an array: it is useless.
-                if (!is_array($val)) {
-                    define(strtoupper($key), $val);
-                }
-            }
-        }
-        if (!defined('API_KEY') || empty(API_KEY)) {
-            output(false, [
-                'message' => 'Cannot find a valid API_KEY defined in the config file. Please, make sure to follow the installation instructions.'
-            ], 503);
-        }
-        if (!defined('SCRIPT_NAME') || empty(SCRIPT_NAME)) {
-            output(false, [
-                'message' => 'Cannot find a valid SCRIPT_NAME defined in the config file. Please, make sure to follow the installation instructions.'
-            ], 503);
-        }
-        // check the SCRIPT_NAME against the request
-        if (
-            !array_key_exists('REQUEST_URI', $_SERVER) ||
-            SCRIPT_NAME !== pathinfo(explode('?', $_SERVER['REQUEST_URI'])[0], PATHINFO_BASENAME)
-        ) {
-            output(false, [
-                'message' => 'Cannot reply to the provided request uri.'
-            ], 400);
-        }
-        if (($req_headers = getallheaders()) === false) {
-            output(false, [
-                'message' => 'Cannot reliably understand the request headers.'
-            ], 400);
-        } else {
-            foreach ($req_headers as $key => $val) {
-                if (in_array(strtolower($key), ['-x-api-key', '_x-api-key'])) {
-                    define('REQUEST_API_KEY', $val);
-                }
-            }
-        }
-        if (!defined('REQUEST_API_KEY') || REQUEST_API_KEY !== API_KEY) {
-            output(false, [
-                'message' => 'Invalid api key provided.'
-            ], 401);
-        }
-        if (!function_exists('exec') || !is_callable('exec')) {
-            output(false, [
-                'message' => 'The "exec" function cannot be called. This microservice relies upon calling exec().'
-            ], 503);
-        }
-        $cwepb_binary = [];
-        $cwepb_binary_check_retvar = exec('which cwebp', $cwepb_binary);
-        $cwepb_binary = implode('', $cwepb_binary);
-        if (empty($cwepb_binary)) {
-            output(false, [
-                'message' => 'The "cwebp" binary cannot be found on your environment. On Ubuntu/Debian, run "sudo apt install webp"'
-            ], 500);
-        } else {
-            define('CWEBP_BINARY', trim($cwepb_binary));
-        }
-        if (!is_dir(TEMP_DIR)) {
-            @mkdir(TEMP_DIR, 0755);
-        }
-        if (!is_dir(TEMP_DIR)) {
-            output(false, [
-                'message' => 'Cannot create the required temporary directory. Please check your environment.'
-            ], 500);
-        }
+    $method = isset($params['m']) ? (int)$params['m'] : 4;
+    if ($method >= 0 && $method <= 6) {
+        $options .= ' -m ' . $method;
     }
+
+    if (isset($params['lossless']) && in_array($params['lossless'], ['1', 'true'], true)) {
+        $options .= ' -lossless';
+    }
+
+    if (isset($params['near_lossless']) && filter_var($params['near_lossless'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 100]])) {
+        $options .= ' -near_lossless ' . (int)$params['near_lossless'];
+    }
+
+    if (isset($params['hint']) && in_array($params['hint'], ['photo', 'picture', 'graph'], true)) {
+        $options .= ' -hint ' . escapeshellarg($params['hint']);
+    }
+
+    if (isset($params['jpeg_like']) && filter_var($params['jpeg_like'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100]])) {
+        $options .= ' -jpeg_like ' . (int)$params['jpeg_like'];
+    }
+
+    return $options;
+}
+
+/**
+ * Formats a size in bytes into a human-readable string with appropriate units.
+ *
+ * @param int $bytes     The size in bytes.
+ * @param int $precision The number of decimal places to include.
+ * @return string The formatted size string (e.g., "1.23 MB").
+ */
+function formatBytes(int $bytes, int $precision = 2): string
+{
+    $units = ['B', 'kB', 'MB', 'GB', 'TB'];
+    $pow = $bytes > 0 ? floor(log($bytes, 1024)) : 0;
+    $pow = min($pow, count($units) - 1);
+    $bytes /= (1 << (10 * $pow));
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
+/**
+ * Returns a human-readable error message corresponding to a file upload error code.
+ *
+ * @param int $errorCode The error code from a file upload.
+ * @return string The associated error message.
+ */
+function fileUploadError(int $errorCode): string
+{
+    $errors = [
+        UPLOAD_ERR_INI_SIZE   => 'The uploaded file exceeds the upload_max_filesize directive.',
+        UPLOAD_ERR_FORM_SIZE  => 'The uploaded file exceeds the MAX_FILE_SIZE directive.',
+        UPLOAD_ERR_PARTIAL    => 'The uploaded file was only partially uploaded.',
+        UPLOAD_ERR_NO_FILE    => 'No file was uploaded.',
+        UPLOAD_ERR_NO_TMP_DIR => 'Missing a temporary folder.',
+        UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk.',
+        UPLOAD_ERR_EXTENSION  => 'A PHP extension stopped the file upload.',
+    ];
+    return $errors[$errorCode] ?? 'Unknown upload error.';
+}
