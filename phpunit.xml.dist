@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Valid for PHPUnit 8.5, 9.6, 10.5 and 11.5 alike: no schema location and
+    only elements and attributes that all four versions understand.
+-->
+<phpunit
+    bootstrap="tests/bootstrap.php"
+    beStrictAboutOutputDuringTests="true"
+    beStrictAboutTestsThatDoNotTestAnything="true"
+    cacheResult="false"
+    colors="true"
+    failOnRisky="true"
+    failOnWarning="true"
+>
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>

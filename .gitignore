@@ -1,6 +1,13 @@
+# Composer: no lock file is committed (one lock cannot serve PHP 7.2 and 8.5)
 /vendor/
+/tools/*/vendor/
+composer.lock
+
+# Tool caches
+/.phpunit.cache/
+/.phpunit.result.cache
+/.php-cs-fixer.cache
+
+# Runtime artefacts and local configuration
 /temp/
-node_modules/
-npm-debug.log
-yarn-error.log
 .env
