@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_NO_INTERACTION: '1'
+
+# Dependencies are resolved by each job for its own PHP version: no lock file
+# is committed. setup-php hands the job token to Composer, so VCS repositories
+# hosted on GitHub resolve without hitting the anonymous API rate limit.
+
+jobs:
+  validate:
+    name: Composer validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+  tests:
+    name: Tests (PHP ${{ matrix.php }}, ${{ matrix.deps }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+        deps: [lowest, highest]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          ini-file: development
+          tools: composer:v2
+
+      # Lowest versions of the runtime dependencies; test tooling (PHPUnit and
+      # the polyfills) always takes the highest version for the running PHP.
+      - name: Install dependencies (lowest)
+        if: matrix.deps == 'lowest'
+        run: |
+          composer update --prefer-lowest --prefer-stable --no-progress
+          composer update phpunit/phpunit yoast/phpunit-polyfills --with-all-dependencies --no-progress
+
+      - name: Install dependencies (highest)
+        if: matrix.deps == 'highest'
+        run: composer update --no-progress
+
+      - name: Run the test suite
+        run: composer test
+
+  static:
+    name: Static analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      - name: Install development tools
+        run: |
+          for tool in tools/*/; do
+            composer install --working-dir="$tool" --no-progress
+          done
+
+      - name: Coding style (php-cs-fixer)
+        run: composer cs:check
+
+      - name: PHPStan (as PHP 7.2.5 and as PHP 8.5)
+        run: composer analyse
+
+      - name: Taint analysis (Psalm)
+        run: composer taint

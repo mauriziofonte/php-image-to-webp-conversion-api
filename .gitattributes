@@ -11,6 +11,7 @@
 *.tiff binary
 *.webp binary
 
+/.github export-ignore
 /tests export-ignore
 /tools export-ignore
 /.editorconfig export-ignore
