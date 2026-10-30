@@ -33,9 +33,36 @@
   "minimum-stability": "stable",
   "prefer-stable": true,
   "scripts": {
-    "test": "@php vendor/bin/phpunit"
+    "test": "@php vendor/bin/phpunit",
+    "analyse": [
+      "@php tools/require-tool.php phpstan",
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan.neon.dist",
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan-php85.neon.dist"
+    ],
+    "cs:check": [
+      "@php tools/require-tool.php php-cs-fixer",
+      "@php tools/php-cs-fixer/vendor/bin/php-cs-fixer fix --dry-run --diff"
+    ],
+    "cs:fix": [
+      "@php tools/require-tool.php php-cs-fixer",
+      "@php tools/php-cs-fixer/vendor/bin/php-cs-fixer fix"
+    ],
+    "taint": [
+      "@php tools/require-tool.php psalm",
+      "@php tools/psalm/vendor/bin/psalm --config=psalm.xml.dist --taint-analysis"
+    ],
+    "ci": [
+      "@cs:check",
+      "@analyse",
+      "@test"
+    ]
   },
   "scripts-descriptions": {
-    "test": "Run the PHPUnit test suite."
+    "test": "Run the PHPUnit test suite.",
+    "analyse": "Run PHPStan at level max for PHP 7.2.5 and for PHP 8.5.",
+    "cs:check": "Check coding style (PSR-12) without changing files.",
+    "cs:fix": "Fix coding style (PSR-12) in place.",
+    "taint": "Run Psalm taint analysis on src/.",
+    "ci": "Run cs:check, analyse and test, in this order."
   }
 }

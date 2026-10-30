@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Psalm runs taint analysis only (composer taint); type checks are PHPStan's
+    job. Code is analysed as PHP 7.2, the lowest supported version.
+-->
+<psalm
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="https://getpsalm.org/schema/config"
+    xsi:schemaLocation="https://getpsalm.org/schema/config tools/psalm/vendor/vimeo/psalm/config.xsd"
+    errorLevel="1"
+    phpVersion="7.2"
+    findUnusedBaselineEntry="true"
+    findUnusedCode="false"
+>
+    <projectFiles>
+        <directory name="src"/>
+    </projectFiles>
+</psalm>

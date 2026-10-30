@@ -10,7 +10,8 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 /**
  * Guards the composer.json invariants that the CI matrix and the other two
  * repositories rely on: PHP range, PSR-4 mapping, runtime and development
- * requirements, and stable resolution without a platform override.
+ * requirements, stable resolution without a platform override, and the
+ * shared Composer script names.
  *
  * @coversNothing
  */
@@ -108,6 +109,16 @@ final class ComposerManifestTest extends TestCase
             self::section('config'),
             'config.platform would make every CI job resolve dependencies for the same PHP version.'
         );
+    }
+
+    public function testComposerScriptsUseTheSharedNames(): void
+    {
+        $scripts = self::section('scripts');
+
+        foreach (['test', 'analyse', 'cs:check', 'cs:fix', 'taint', 'ci'] as $name) {
+            self::assertArrayHasKey($name, $scripts);
+        }
+        self::assertSame(['@cs:check', '@analyse', '@test'], $scripts['ci']);
     }
 
     /**

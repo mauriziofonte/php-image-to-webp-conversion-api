@@ -1,0 +1,9 @@
+{
+  "description": "PHPStan for this repository, kept apart from the root require-dev because it cannot be installed on PHP 7.2. Used by the analyse Composer script.",
+  "require": {
+    "phpstan/phpstan": "^2.3"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
