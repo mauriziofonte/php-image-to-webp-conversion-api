@@ -5,6 +5,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Keep every supported release line when a new major appears
+    # ("^5.4 || ^6.4 || ^7.0 || ^8.0" grows instead of being replaced).
+    versioning-strategy: widen
     commit-message:
       prefix: build
       include: scope

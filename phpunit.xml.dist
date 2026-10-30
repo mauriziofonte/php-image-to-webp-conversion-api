@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
     Valid for PHPUnit 8.5, 9.6, 10.5 and 11.5 alike: no schema location and
-    only elements and attributes that all four versions understand.
+    only elements and attributes that all four versions understand. Notices,
+    warnings and deprecations are made fatal by the error handler that
+    tests/bootstrap.php installs.
 -->
 <phpunit
     bootstrap="tests/bootstrap.php"

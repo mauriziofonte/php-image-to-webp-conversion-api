@@ -1,9 +1,15 @@
 {
-  "description": "PHP CS Fixer for this repository, kept apart from the root require-dev because it cannot be installed on PHP 7.2. Used by the cs:check and cs:fix Composer scripts.",
+  "name": "mfonte/image-conversion-api-tools-php-cs-fixer",
+  "description": "PHP CS Fixer for mfonte/image-conversion-api, installed apart from the root require-dev because it does not support PHP 7.2. Used by the cs:check and cs:fix Composer scripts.",
+  "type": "project",
+  "license": "BSD-3-Clause",
   "require": {
+    "php": "^7.4 || ^8.0",
     "friendsofphp/php-cs-fixer": "^3.95"
   },
   "config": {
     "sort-packages": true
-  }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
 }

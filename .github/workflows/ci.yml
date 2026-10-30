@@ -36,8 +36,14 @@ jobs:
           coverage: none
           tools: composer:v2
 
-      - name: Validate composer.json
-        run: composer validate --strict
+      # The manifests of the development tools are held to the same standard
+      # as the root one.
+      - name: Validate the Composer manifests
+        run: |
+          composer validate --strict
+          for tool in tools/*/; do
+            composer validate --strict "${tool}composer.json"
+          done
 
   tests:
     name: Tests (PHP ${{ matrix.php }}, ${{ matrix.deps }})
@@ -54,6 +60,7 @@ jobs:
         with:
           persist-credentials: false
 
+      # The development php.ini reports every error and enables assertions.
       - name: Set up PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
@@ -62,17 +69,45 @@ jobs:
           ini-file: development
           tools: composer:v2
 
+      # PHPStan's PHP 7.2 run does not report every construct that older PHP
+      # versions reject (typed properties, trailing commas in calls), so each
+      # job first lints the code with its own PHP.
+      - name: Lint PHP files
+        run: |
+          count=0
+          status=0
+          while IFS= read -r -d '' file; do
+            count=$((count + 1))
+            output="$(php -l "$file" 2>&1)" || { printf '%s\n' "$output"; status=1; }
+          done < <(find src tests tools/require-tool.php -type f -name '*.php' -print0 | sort -z)
+          echo "Linted $count PHP files with PHP $(php -r 'echo PHP_VERSION;')"
+          exit "$status"
+
       # Lowest versions of the runtime dependencies; test tooling (PHPUnit and
       # the polyfills) always takes the highest version for the running PHP.
+      # Composer 2.9+ would silently skip a floor that has an advisory and
+      # resolve the next release instead, so security blocking is turned off
+      # here (COMPOSER_NO_SECURITY_BLOCKING is its name before Composer 2.10)
+      # and the audit below fails when a floor needs raising.
       - name: Install dependencies (lowest)
         if: matrix.deps == 'lowest'
+        env:
+          COMPOSER_NO_BLOCKING: '1'
+          COMPOSER_NO_SECURITY_BLOCKING: '1'
         run: |
           composer update --prefer-lowest --prefer-stable --no-progress
           composer update phpunit/phpunit yoast/phpunit-polyfills --with-all-dependencies --no-progress
 
+      - name: Audit dependencies (lowest)
+        if: matrix.deps == 'lowest'
+        run: composer audit
+
       - name: Install dependencies (highest)
         if: matrix.deps == 'highest'
         run: composer update --no-progress
+
+      - name: Show installed packages
+        run: composer show
 
       - name: Run the test suite
         run: composer test
@@ -96,6 +131,12 @@ jobs:
 
       - name: Install dependencies (highest)
         run: composer update --no-progress
+
+      # Any advisory on the resolved dependencies, or an abandoned package,
+      # fails the job. The runtime floors in composer.json are chosen so that
+      # a lowest install is advisory-free as well (see the tests job).
+      - name: Audit dependencies
+        run: composer audit
 
       - name: Install development tools
         run: |

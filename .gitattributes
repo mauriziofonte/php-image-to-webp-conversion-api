@@ -11,6 +11,8 @@
 *.tiff binary
 *.webp binary
 
+# Development-only files, left out of "composer install --prefer-dist"
+# archives and of "git archive".
 /.github export-ignore
 /tests export-ignore
 /tools export-ignore

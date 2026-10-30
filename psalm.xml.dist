@@ -1,18 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    Psalm runs taint analysis only (composer taint); type checks are PHPStan's
-    job. Code is analysed as PHP 7.2, the lowest supported version.
+    Psalm runs taint analysis only (composer taint); type checks and the PHP
+    7.2 syntax limits are the job of PHPStan and php -l. phpVersion is 8.4,
+    the PHP of the CI static job: targeting 7.2, Psalm cannot parse Symfony 8
+    (property hooks) and loses every Request member the stub does not
+    declare, the parameter bags included. The stub marks the
+    HttpFoundation request accessors as taint sources (see its header):
+    without it, request data reaching src/ would look clean.
 -->
 <psalm
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xmlns="https://getpsalm.org/schema/config"
     xsi:schemaLocation="https://getpsalm.org/schema/config tools/psalm/vendor/vimeo/psalm/config.xsd"
     errorLevel="1"
-    phpVersion="7.2"
+    phpVersion="8.4"
     findUnusedBaselineEntry="true"
     findUnusedCode="false"
 >
     <projectFiles>
         <directory name="src"/>
     </projectFiles>
+    <stubs>
+        <file name="tools/psalm/stubs/symfony-http-foundation.phpstub"/>
+    </stubs>
 </psalm>

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Mfonte\ImageConversionApi\Tests\Unit;
+namespace Mfonte\ImageConversionApi\Tests\Unit\Tooling;
 
 use Mfonte\SecureImageConverter\Contract\ConversionRequest;
 use PHPUnit\Framework\Attributes\CoversNothing;
@@ -25,7 +25,7 @@ final class RuntimeDependencyCompatibilityTest extends TestCase
      */
     public function testConversionLibraryIsAutoloadedFromVendor(): void
     {
-        $vendor = realpath(dirname(__DIR__, 2) . '/vendor');
+        $vendor = realpath(dirname(__DIR__, 3) . '/vendor');
         self::assertIsString($vendor);
         $file = (new \ReflectionClass(ConversionRequest::class))->getFileName();
         self::assertIsString($file);

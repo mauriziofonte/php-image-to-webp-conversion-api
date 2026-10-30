@@ -2,44 +2,26 @@
 
 declare(strict_types=1);
 
+use Mfonte\ImageConversionApi\Tests\StrictErrorHandler;
+
 /*
- * PHPUnit bootstrap.
- *
- * Every error level is reported, and every notice, warning and deprecation
- * becomes an \ErrorException, so that a PHP 8.4 or 8.5 deprecation raised by
- * src/ or tests/ fails the build. PHPUnit 8.5 to 11.5 do not register their
- * own error handler when one is already installed, so this one stays active
- * while the tests run; BootstrapErrorHandlerTest proves it on every version.
- *
- * Two exceptions, both left to PHP's standard handler, which prints them on
- * STDERR without failing the run:
- * - deprecations raised inside vendor/, which are not ours to fix;
- * - errors silenced with the @ operator.
+ * PHPUnit bootstrap. The strict error handler is installed first, before the
+ * Composer autoloader, so that it also covers the code that runs while
+ * Composer loads the "files" autoload entries: every notice, warning and
+ * deprecation becomes an exception, except deprecations raised inside
+ * vendor/, which are counted and reported on STDERR at shutdown.
  */
-
 error_reporting(E_ALL);
-ini_set('display_errors', 'stderr');
-ini_set('log_errors', '0');
 
-$projectRoot = realpath(dirname(__DIR__));
-if ($projectRoot === false) {
-    throw new RuntimeException('Cannot resolve the project root directory.');
+$projectRoot = dirname(__DIR__);
+
+if (!is_file($projectRoot . '/vendor/autoload.php')) {
+    fwrite(STDERR, 'Dependencies are missing. Run: composer install' . PHP_EOL);
+    exit(1);
 }
-$vendorDir = $projectRoot . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR;
 
-set_error_handler(
-    static function (int $level, string $message, string $file = '', int $line = 0) use ($vendorDir): bool {
-        if ((error_reporting() & $level) === 0) {
-            return false;
-        }
+require_once __DIR__ . '/StrictErrorHandler.php';
 
-        $isDeprecation = $level === E_DEPRECATED || $level === E_USER_DEPRECATED;
-        if ($isDeprecation && strpos($file, $vendorDir) === 0) {
-            return false;
-        }
+StrictErrorHandler::install($projectRoot . DIRECTORY_SEPARATOR . 'vendor');
 
-        throw new ErrorException($message, 0, $level, $file, $line);
-    }
-);
-
-require $projectRoot . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+require_once $projectRoot . '/vendor/autoload.php';

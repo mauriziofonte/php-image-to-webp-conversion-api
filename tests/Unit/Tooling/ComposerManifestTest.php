@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Mfonte\ImageConversionApi\Tests\Unit;
+namespace Mfonte\ImageConversionApi\Tests\Unit\Tooling;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
@@ -143,7 +143,7 @@ final class ComposerManifestTest extends TestCase
      */
     private static function manifest(): array
     {
-        $json = file_get_contents(dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'composer.json');
+        $json = file_get_contents(dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'composer.json');
         self::assertIsString($json);
 
         $manifest = json_decode($json, true);

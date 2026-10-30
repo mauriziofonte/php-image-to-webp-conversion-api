@@ -43,8 +43,8 @@
     "test": "@php vendor/bin/phpunit",
     "analyse": [
       "@php tools/require-tool.php phpstan",
-      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan.neon.dist",
-      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan-php85.neon.dist"
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --no-progress --memory-limit=1G",
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan-php85.neon.dist --no-progress --memory-limit=1G"
     ],
     "cs:check": [
       "@php tools/require-tool.php php-cs-fixer",
@@ -66,10 +66,10 @@
   },
   "scripts-descriptions": {
     "test": "Run the PHPUnit test suite.",
-    "analyse": "Run PHPStan at level max for PHP 7.2.5 and for PHP 8.5.",
-    "cs:check": "Check coding style (PSR-12) without changing files.",
-    "cs:fix": "Fix coding style (PSR-12) in place.",
-    "taint": "Run Psalm taint analysis on src/.",
+    "analyse": "Run PHPStan at level max as PHP 7.2.5 and as PHP 8.5 (needs tools/phpstan).",
+    "cs:check": "Report coding style violations as a diff, without changing files (needs tools/php-cs-fixer).",
+    "cs:fix": "Fix coding style violations in place (needs tools/php-cs-fixer).",
+    "taint": "Run the Psalm taint analysis on src/ (needs tools/psalm).",
     "ci": "Run cs:check, analyse and test, in this order."
   }
 }
