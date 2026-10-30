@@ -61,6 +61,23 @@ final class ComposerManifestTest extends TestCase
         self::assertSame([], $unapproved, 'Runtime dependencies outside the approved list.');
     }
 
+    /**
+     * The conversion library is not on Packagist: it is required from its
+     * GitHub repository, as the integration branch aliased to 1.0.0 until the
+     * library is released, and as ^1.0 from then on (plan section 9).
+     */
+    public function testConversionLibraryIsRequiredFromItsGitRepository(): void
+    {
+        self::assertContains(
+            self::section('require')['mfonte/secure-image-converter'] ?? null,
+            ['dev-claude/project-thread-79fchb as 1.0.0', '^1.0']
+        );
+        self::assertSame(
+            [['type' => 'vcs', 'url' => 'https://github.com/mauriziofonte/php-secure-image-converter']],
+            self::manifest()['repositories'] ?? null
+        );
+    }
+
     public function testDevRequirementsAreLimitedToPhpUnitAndPolyfills(): void
     {
         $packages = array_keys(self::section('require-dev'));

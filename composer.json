@@ -9,8 +9,15 @@
       "homepage": "https://github.com/mauriziofonte"
     }
   ],
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/mauriziofonte/php-secure-image-converter"
+    }
+  ],
   "require": {
-    "php": "^7.2.5 || ^8.0"
+    "php": "^7.2.5 || ^8.0",
+    "mfonte/secure-image-converter": "dev-claude/project-thread-79fchb as 1.0.0"
   },
   "require-dev": {
     "phpunit/phpunit": "^8.5.52 || ^9.6.33 || ^10.5.62 || ^11.5.50",
