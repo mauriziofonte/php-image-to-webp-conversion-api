@@ -1,6 +1,12 @@
 # PHPStan at level max, analysed as PHP 7.2.5 (the lowest supported version).
 # phpstan-php85.neon.dist includes this file and analyses as PHP 8.5.
 # No baseline: every finding is fixed, or ignored inline with a justification.
+includes:
+    # Calls to deprecated functions, methods and classes, e.g. curl_close()
+    # in the PHP 8.5 run. Explicit include: tools/phpstan installs no
+    # extension-installer plugin.
+    - tools/phpstan/vendor/phpstan/phpstan-deprecation-rules/rules.neon
+
 parameters:
     level: max
     phpVersion: 70205
