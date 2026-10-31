@@ -62,6 +62,21 @@ final class ComposerManifestTest extends TestCase
     }
 
     /**
+     * The runtime dependencies the API shares with the proxy carry exactly the
+     * proxy's constraints, so that both install side by side and with the
+     * same security floors (each branch starts at the first release without
+     * a known advisory; composer audit on a lowest install proves it in CI).
+     */
+    public function testSharedRuntimeConstraintsMatchTheProxy(): void
+    {
+        $require = self::section('require');
+
+        self::assertSame('^5.4.54 || ^6.4.46 || ^7.4.19 || ^8.1.7', $require['symfony/http-foundation'] ?? null);
+        self::assertSame('^1.1 || ^2.0 || ^3.0', $require['psr/log'] ?? null);
+        self::assertSame('*', $require['ext-json'] ?? null);
+    }
+
+    /**
      * The conversion library is not on Packagist: it is required from its
      * GitHub repository, as the integration branch aliased to 1.0.0 until the
      * library is released, and as ^1.0 from then on (plan section 9).
