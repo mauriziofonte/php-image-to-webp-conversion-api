@@ -6,10 +6,15 @@ namespace Mfonte\ImageConversionApi\Tests\Unit\Observability;
 
 use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
 use PHPUnit\Framework\Attributes\CoversClass;
+use Psr\Log\InvalidArgumentException;
 use Psr\Log\LogLevel;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 /**
+ * The entries follow the log schema of the proxy's JsonLogger: the same
+ * fields in the same order, the context always an object, the same
+ * interpolation and the same JSON-friendly values.
+ *
  * @covers \Mfonte\ImageConversionApi\Observability\ErrorLogLogger
  */
 #[CoversClass(ErrorLogLogger::class)]
@@ -20,53 +25,146 @@ final class ErrorLogLoggerTest extends TestCase
      */
     private $lines = [];
 
-    public function testWritesOneJsonObjectPerEntryWithPlaceholdersReplaced(): void
+    public function testWritesOneJsonObjectPerEntryInTheSharedSchema(): void
     {
         $this->logger()->error('Failure in {route} after {attempts} attempts', ['route' => 'v2_convert', 'attempts' => 3]);
 
+        $entry = $this->decodedLine();
+        self::assertSame(['timestamp', 'level', 'channel', 'message', 'context'], array_keys($entry));
+        self::assertSame('error', $entry['level']);
+        self::assertSame('image-conversion-api', $entry['channel']);
+        self::assertSame('Failure in v2_convert after 3 attempts', $entry['message']);
+        self::assertSame(['route' => 'v2_convert', 'attempts' => 3], $entry['context']);
+    }
+
+    public function testTheTimestampIsRfc3339WithMicroseconds(): void
+    {
+        $this->logger()->warning('message');
+
+        $timestamp = $this->decodedLine()['timestamp'] ?? null;
+        self::assertIsString($timestamp);
+        self::assertMatchesRegularExpression('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}:\d{2}\z/', $timestamp);
+    }
+
+    /**
+     * 1.x-style "context":[] would be a list for a JSON reader.
+     */
+    public function testAnEmptyContextIsAnObject(): void
+    {
+        $this->logger()->critical('No API key is configured');
+
+        self::assertCount(1, $this->lines);
+        self::assertStringEndsWith('"message":"No API key is configured","context":{}}', $this->lines[0]);
+    }
+
+    public function testPlaceholdersAreReplacedAsTheProxyReplacesThem(): void
+    {
+        $this->logger()->info('{route} {ms} ms, cached {cached}, retried {retried}, [{none}] at {date}, {missing} {array}', [
+            'route' => 'v2_convert',
+            'ms' => 12.5,
+            'cached' => true,
+            'retried' => false,
+            'none' => null,
+            'date' => new \DateTimeImmutable('2026-09-01T10:00:00+00:00'),
+            'array' => [1],
+        ]);
+
         self::assertSame(
-            ['{"level":"error","channel":"image-conversion-api","message":"Failure in v2_convert after 3 attempts","context":{"route":"v2_convert","attempts":3}}'],
-            $this->lines
+            'v2_convert 12.5 ms, cached true, retried false, [] at 2026-09-01T10:00:00+00:00, {missing} {array}',
+            $this->decodedLine()['message'] ?? null
         );
     }
 
     public function testReducesExceptionsToTheirDescription(): void
     {
         $previous = new \LogicException('inner', 7);
-        $this->logger()->log(LogLevel::CRITICAL, 'Unhandled', ['exception' => new \RuntimeException('outer', 1, $previous)]);
+        $exception = new \RuntimeException('outer', 1, $previous);
 
-        $entry = $this->decodedLine();
-        self::assertSame('critical', $entry['level'] ?? null);
-        $exception = self::arrayAt(self::arrayAt($entry, 'context'), 'exception');
-        self::assertSame('RuntimeException', $exception['class'] ?? null);
-        self::assertSame('outer', $exception['message'] ?? null);
-        self::assertSame(1, $exception['code'] ?? null);
-        $file = $exception['file'] ?? null;
-        self::assertIsString($file);
-        self::assertStringStartsWith(__FILE__ . ':', $file);
-        $previous = self::arrayAt($exception, 'previous');
-        self::assertSame('LogicException', $previous['class'] ?? null);
-        self::assertSame('inner', $previous['message'] ?? null);
+        $this->logger()->log(LogLevel::CRITICAL, 'Unhandled', ['exception' => $exception]);
+
+        self::assertSame([
+            'class' => 'RuntimeException',
+            'message' => 'outer',
+            'code' => 1,
+            'file' => __FILE__ . ':' . $exception->getLine(),
+            'previous' => [
+                'class' => 'LogicException',
+                'message' => 'inner',
+                'code' => 7,
+                'file' => __FILE__ . ':' . $previous->getLine(),
+            ],
+        ], self::arrayAt(self::arrayAt($this->decodedLine(), 'context'), 'exception'));
     }
 
-    public function testSummarisesValuesThatCannotBeEncoded(): void
+    public function testMakesOtherValuesJsonFriendly(): void
     {
         $stream = fopen('php://memory', 'rb');
+        self::assertIsResource($stream);
+
         $this->logger()->warning('Odd context', [
-            'object' => new \stdClass(),
+            'null' => null,
+            'flag' => false,
+            'date' => new \DateTimeImmutable('2026-09-01T10:00:00+00:00'),
+            'object' => new \ArrayObject(),
+            'serialisable' => new class () implements \JsonSerializable {
+                /**
+                 * @return array<string, int>
+                 */
+                public function jsonSerialize(): array
+                {
+                    return ['id' => 7];
+                }
+            },
+            'nested' => ['a' => ['b' => 1]],
+            'infinite' => INF,
             'resource' => $stream,
-            'deep' => [[[[['too deep']]]]],
             'binary' => "\xff\xfe",
         ]);
-        if (is_resource($stream)) {
-            fclose($stream);
+        fclose($stream);
+
+        self::assertSame([
+            'null' => null,
+            'flag' => false,
+            'date' => '2026-09-01T10:00:00+00:00',
+            'object' => '[object ArrayObject]',
+            'serialisable' => ['id' => 7],
+            'nested' => ['a' => ['b' => 1]],
+            'infinite' => 'INF',
+            'resource' => '[resource]',
+            'binary' => "\u{fffd}\u{fffd}",
+        ], $this->decodedLine()['context'] ?? null);
+    }
+
+    public function testSummarisesDeepValues(): void
+    {
+        $value = 'leaf';
+        for ($i = 0; $i < 12; ++$i) {
+            $value = [$value];
         }
 
-        $context = self::arrayAt($this->decodedLine(), 'context');
-        self::assertSame('[object stdClass]', $context['object'] ?? null);
-        self::assertSame('[resource]', $context['resource'] ?? null);
-        self::assertSame([[['[array of 1]']]], $context['deep'] ?? null);
-        self::assertSame("\u{fffd}\u{fffd}", $context['binary'] ?? null);
+        $this->logger()->info('deep', ['value' => $value]);
+
+        self::assertCount(1, $this->lines);
+        self::assertStringContainsString('[[[[[[[["[...]"]]]]]]]]', $this->lines[0]);
+    }
+
+    /**
+     * Messages and values cannot forge other entries (log injection).
+     */
+    public function testNewlinesStayInsideTheEntry(): void
+    {
+        $this->logger()->error("a\nb", ['url' => "c\r\n{\"level\":\"emergency\"}"]);
+
+        self::assertCount(1, $this->lines);
+        self::assertStringNotContainsString("\n", $this->lines[0]);
+        self::assertSame("a\nb", $this->decodedLine()['message'] ?? null);
+    }
+
+    public function testRefusesAnUnknownLevel(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->logger()->log('verbose', 'message');
     }
 
     public function testAWriterThatFailsDoesNotBreakTheCaller(): void
