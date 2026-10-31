@@ -30,7 +30,10 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  *
  * Removal never follows symbolic links, never raises a PHP warning (it may
  * run at shutdown, after the owner of a directory already removed it, under
- * a strict error handler) and is idempotent.
+ * a strict error handler) and is idempotent. It reports what it could not
+ * remove (a subdirectory the handler made read-only, say): such a directory
+ * stays tracked, so that removeAll() tries again at shutdown, and the
+ * kernel logs a warning.
  */
 final class RequestDirectories
 {
@@ -112,28 +115,40 @@ final class RequestDirectories
 
     /**
      * Removes a directory created by create(), with everything inside, and
-     * stops tracking it. Does nothing for a path this object did not create
-     * or already removed.
+     * stops tracking it. When part of it cannot be removed, it stays
+     * tracked, so that a later remove() or removeAll() tries again. Does
+     * nothing for a path this object did not create or already removed.
+     *
+     * @return bool false when part of the directory is left; true when it is gone, or is not a directory this
+     *              object tracks
      */
-    public function remove(string $path): void
+    public function remove(string $path): bool
     {
         if (!isset($this->directories[$path])) {
-            return;
+            return true;
+        }
+        if (!self::removeTree($path)) {
+            return false;
         }
         unset($this->directories[$path]);
-        self::removeTree($path);
+
+        return true;
     }
 
     /**
      * Removes every directory still tracked.
      *
      * @internal the shutdown function registered by create()
+     *
+     * @return list<string> the directories left, still tracked
      */
-    public function removeAll(): void
+    public function removeAll(): array
     {
         foreach (array_keys($this->directories) as $path) {
             $this->remove((string) $path);
         }
+
+        return $this->getTracked();
     }
 
     /**
@@ -156,16 +171,18 @@ final class RequestDirectories
     /**
      * Removes $path and, for a directory, everything inside it. A symbolic
      * link is removed, never followed.
+     *
+     * @return bool whether $path is gone
      */
-    private static function removeTree(string $path): void
+    private static function removeTree(string $path): bool
     {
-        if (is_link($path) || is_file($path)) {
-            @unlink($path);
+        if (is_link($path) || !is_dir($path)) {
+            // A file, a link, a FIFO or a socket, or nothing any more.
+            if (!self::isGone($path)) {
+                @unlink($path);
+            }
 
-            return;
-        }
-        if (!is_dir($path)) {
-            return;
+            return self::isGone($path);
         }
         $entries = @scandir($path);
         foreach ($entries === false ? [] : $entries as $entry) {
@@ -174,5 +191,14 @@ final class RequestDirectories
             }
         }
         @rmdir($path);
+
+        return self::isGone($path);
+    }
+
+    private static function isGone(string $path): bool
+    {
+        clearstatcache(true, $path);
+
+        return !is_link($path) && !file_exists($path);
     }
 }

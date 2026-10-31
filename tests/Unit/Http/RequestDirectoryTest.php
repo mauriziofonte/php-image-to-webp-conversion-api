@@ -51,12 +51,14 @@ final class RequestDirectoryTest extends TestCase
     public function testRemoveDeletesTheDirectoryAndEndsIt(): void
     {
         $request = (new RequestDirectories($this->directory->path()))->forRequest();
-        file_put_contents($request->getPath() . '/output.webp', 'output');
+        $path = $request->getPath();
+        file_put_contents($path . '/output.webp', 'output');
 
-        $request->remove();
-        $request->remove();
+        self::assertTrue($request->remove());
+        self::assertTrue($request->remove());
 
         self::assertFalse($request->isCreated());
+        self::assertSame($path, $request->getCreatedPath());
         self::assertSame([], $this->directory->entries());
         $this->expectException(RuntimeException::class);
         $request->getPath();
@@ -66,8 +68,31 @@ final class RequestDirectoryTest extends TestCase
     {
         $request = (new RequestDirectories($this->directory->path('never-created')))->forRequest();
 
-        $request->remove();
+        self::assertTrue($request->remove());
 
+        self::assertNull($request->getCreatedPath());
+        self::assertSame([], $this->directory->entries());
+    }
+
+    public function testRemoveReportsWhatItCouldNotRemoveAndTriesAgain(): void
+    {
+        $directories = new RequestDirectories($this->directory->path());
+        $request = $directories->forRequest();
+        $path = $request->getPath();
+        mkdir($path . '/locked');
+        touch($path . '/locked/output.webp');
+        if (!TemporaryDirectory::makeReadOnly($path . '/locked')) {
+            self::markTestSkipped('Directory permissions do not stop root: run the suite as another user');
+        }
+
+        self::assertFalse($request->remove());
+        self::assertFalse($request->isCreated());
+        self::assertSame([$path], $directories->getTracked());
+
+        chmod($path . '/locked', 0700);
+
+        self::assertTrue($request->remove());
+        self::assertSame([], $directories->getTracked());
         self::assertSame([], $this->directory->entries());
     }
 }

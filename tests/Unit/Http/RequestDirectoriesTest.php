@@ -78,9 +78,41 @@ final class RequestDirectoriesTest extends TestCase
         file_put_contents($path . '/input.png', 'input');
         file_put_contents($path . '/nested/deeper/output.webp', 'output');
 
-        $directories->remove($path);
+        self::assertTrue($directories->remove($path));
 
         self::assertDirectoryDoesNotExist($path);
+        self::assertSame([], $this->directory->entries());
+        self::assertSame([], $directories->getTracked());
+    }
+
+    /**
+     * A directory that cannot be removed entirely is reported, quietly,
+     * and stays tracked, so that removeAll() tries again at shutdown.
+     */
+    public function testKeepsTrackingADirectoryItCannotRemove(): void
+    {
+        $directories = new RequestDirectories($this->directory->path());
+        $path = $directories->create();
+        mkdir($path . '/locked');
+        file_put_contents($path . '/locked/output.webp', 'output');
+        file_put_contents($path . '/input.png', 'input');
+        if (!TemporaryDirectory::makeReadOnly($path . '/locked')) {
+            self::markTestSkipped('Directory permissions do not stop root: run the suite as another user');
+        }
+
+        // Under the strict error handler of the suite, a warning that is not silenced would throw.
+        $removed = $directories->remove($path);
+        $leftAtShutdown = $directories->removeAll();
+
+        self::assertFalse($removed);
+        self::assertSame(['output.webp'], $this->directory->entries(basename($path) . '/locked'));
+        self::assertSame(['locked'], $this->directory->entries(basename($path)), 'what could be removed is removed');
+        self::assertSame([$path], $directories->getTracked());
+        self::assertSame([$path], $leftAtShutdown);
+
+        chmod($path . '/locked', 0700);
+
+        self::assertTrue($directories->remove($path));
         self::assertSame([], $this->directory->entries());
         self::assertSame([], $directories->getTracked());
     }
@@ -116,9 +148,9 @@ final class RequestDirectoriesTest extends TestCase
         });
 
         try {
-            $directories->remove($path);
-            $directories->remove($path);
-            $directories->removeAll();
+            self::assertTrue($directories->remove($path));
+            self::assertTrue($directories->remove($path));
+            self::assertSame([], $directories->removeAll());
         } finally {
             restore_error_handler();
         }
@@ -133,8 +165,8 @@ final class RequestDirectoriesTest extends TestCase
         mkdir($foreign);
         $directories = new RequestDirectories($this->directory->path());
 
-        $directories->remove($foreign);
-        $directories->removeAll();
+        self::assertTrue($directories->remove($foreign), 'nothing of this object is left there');
+        self::assertSame([], $directories->removeAll());
 
         self::assertDirectoryExists($foreign);
     }
@@ -151,7 +183,7 @@ final class RequestDirectoriesTest extends TestCase
         file_put_contents($leftOver . '/output.webp', 'output');
         $directories->remove($removed);
 
-        $directories->removeAll();
+        self::assertSame([], $directories->removeAll());
 
         self::assertSame([], $this->directory->entries());
         self::assertSame([], $directories->getTracked());

@@ -10,8 +10,9 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  * The temporary directory of one request, created on the first getPath(),
  * so that requests that write no file (health checks, errors) touch no disk.
  *
- * The kernel calls remove() when the request ends; RequestDirectories
- * removes it at shutdown when a fatal error skipped that.
+ * The kernel calls remove() when the request ends, and logs a warning when
+ * part of the directory is left; RequestDirectories removes it at shutdown
+ * when a fatal error skipped that, or tries again what was left.
  */
 final class RequestDirectory
 {
@@ -54,7 +55,7 @@ final class RequestDirectory
     }
 
     /**
-     * Whether getPath() created the directory and it was not removed yet.
+     * Whether getPath() created the directory and remove() was not called yet.
      */
     public function isCreated(): bool
     {
@@ -62,14 +63,26 @@ final class RequestDirectory
     }
 
     /**
-     * Removes the directory with everything inside, when it was created.
-     * Idempotent; getPath() throws afterwards.
+     * The path getPath() created, also after remove(), for messages; null
+     * when the directory was never created.
      */
-    public function remove(): void
+    public function getCreatedPath(): ?string
+    {
+        return $this->path;
+    }
+
+    /**
+     * Removes the directory with everything inside, when it was created.
+     * getPath() throws afterwards. Calling it again tries again what is
+     * left.
+     *
+     * @return bool false when part of the directory is left (it stays tracked by RequestDirectories); true when it
+     *              is gone or was never created
+     */
+    public function remove(): bool
     {
         $this->removed = true;
-        if ($this->path !== null) {
-            $this->directories->remove($this->path);
-        }
+
+        return $this->path === null || $this->directories->remove($this->path);
     }
 }

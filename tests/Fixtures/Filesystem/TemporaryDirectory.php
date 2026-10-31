@@ -6,7 +6,8 @@ namespace Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem;
 
 /**
  * A directory created below the system temporary directory and removed with
- * everything in it. Symbolic links are removed, never followed.
+ * everything in it, read-only subdirectories included. Symbolic links are
+ * removed, never followed.
  */
 final class TemporaryDirectory
 {
@@ -52,6 +53,30 @@ final class TemporaryDirectory
         self::removePath($this->path);
     }
 
+    /**
+     * Makes a directory read-only (mode 0500), so that its entries cannot
+     * be removed, and tells whether that holds: it does not for root, whom
+     * permissions do not stop. remove() undoes it.
+     *
+     * @param string $absolutePath a directory below this one
+     *
+     * @return bool false when entries can still be created and removed in it (running as root)
+     */
+    public static function makeReadOnly(string $absolutePath): bool
+    {
+        if (!chmod($absolutePath, 0500)) {
+            throw new \RuntimeException('Cannot change the mode of ' . $absolutePath);
+        }
+        $probe = $absolutePath . DIRECTORY_SEPARATOR . '.write-probe';
+        if (@touch($probe)) {
+            unlink($probe);
+
+            return false;
+        }
+
+        return true;
+    }
+
     private static function removePath(string $path): void
     {
         if (is_link($path) || is_file($path)) {
@@ -62,6 +87,7 @@ final class TemporaryDirectory
         if (!is_dir($path)) {
             return;
         }
+        chmod($path, 0700);
         foreach ((array) scandir($path) as $entry) {
             if (is_string($entry) && $entry !== '.' && $entry !== '..') {
                 self::removePath($path . DIRECTORY_SEPARATOR . $entry);

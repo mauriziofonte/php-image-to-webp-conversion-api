@@ -7,6 +7,7 @@ namespace Mfonte\ImageConversionApi\Tests\Functional\Http;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
+use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Http\Route;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\FakeConverter;
@@ -133,6 +134,44 @@ final class TemporaryFilesTest extends TestCase
     }
 
     /**
+     * A directory that cannot be removed entirely does not change the
+     * response, but it is logged as a warning and stays tracked.
+     */
+    public function testADirectoryThatCannotBeRemovedIsLogged(): void
+    {
+        $handler = new class () implements RequestHandlerInterface {
+            /**
+             * @var string|null
+             */
+            public $locked;
+
+            public function handle(Request $request, RequestDirectory $directory): Response
+            {
+                $this->locked = $directory->getPath() . '/locked';
+                mkdir($this->locked);
+                touch($this->locked . '/output.webp');
+
+                return (new ResponseFactory())->json(['locked' => TemporaryDirectory::makeReadOnly($this->locked)]);
+            }
+        };
+
+        $response = $this->handle($handler);
+
+        $locked = $handler->locked;
+        self::assertIsString($locked);
+        if ($response->getContent() === '{"locked":false}') {
+            self::markTestSkipped('Directory permissions do not stop root: run the suite as another user');
+        }
+        self::assertSame(200, $response->getStatusCode());
+        self::assertDirectoryExists($locked);
+        $records = $this->logger->getRecords();
+        self::assertCount(1, $records);
+        self::assertSame('warning', $records[0]['level']);
+        self::assertSame('The temporary directory {directory} of route {route} could not be removed entirely', $records[0]['message']);
+        self::assertSame(['route' => 'probe', 'directory' => dirname($locked)], $records[0]['context']);
+    }
+
+    /**
      * A fatal error skips the kernel's finally block: the shutdown function
      * of RequestDirectories removes the directory. The probe's own shutdown
      * function, which runs first, proves that the files existed at that
@@ -170,7 +209,7 @@ final class TemporaryFilesTest extends TestCase
         self::assertSame([], $this->directory->entries('temp'), 'the request directory is removed; ' . $process);
     }
 
-    private function handle(ConvertingHandler $handler): Response
+    private function handle(RequestHandlerInterface $handler): Response
     {
         $kernel = TestKernel::create([new Route('probe', '/probe', ['POST'], $handler, true)], $this->directory->path(), $this->logger);
 

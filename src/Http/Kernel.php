@@ -29,8 +29,9 @@ use Symfony\Component\HttpFoundation\Response;
  *    does not answer the method answers 405 with an Allow header;
  * 4. the handler of the route runs with a temporary directory of its own,
  *    which is removed when the request ends, whatever happened (see
- *    RequestDirectories for fatal errors); an exception it throws is logged
- *    and answered with a generic 500.
+ *    RequestDirectories for fatal errors), with a warning in the log when
+ *    part of it cannot be removed; an exception the handler throws is
+ *    logged and answered with a generic 500.
  *
  * The method is the one the client sent (REQUEST_METHOD): method overrides
  * (X-HTTP-Method-Override, _method) are ignored. A HEAD request gets the
@@ -178,7 +179,12 @@ final class Kernel
 
             return $this->responses->internalError();
         } finally {
-            $directory->remove();
+            if (!$directory->remove()) {
+                $this->logger->warning('The temporary directory {directory} of route {route} could not be removed entirely', [
+                    'route' => $route->getName(),
+                    'directory' => $directory->getCreatedPath(),
+                ]);
+            }
         }
     }
 }
