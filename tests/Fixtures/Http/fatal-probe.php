@@ -6,8 +6,9 @@ declare(strict_types=1);
  * Drives the kernel with one request whose handler, while the request
  * directory holds its input, its output and a nested file, ends in a fatal
  * error (a class declared twice), after which finally blocks and
- * destructors do not run. RequestDirectoriesFatalErrorTest runs it in a
- * separate PHP process and checks that the directory is removed anyway.
+ * destructors do not run. TemporaryFilesTest::testAFatalErrorLeavesNoFile
+ * runs it in a separate PHP process and checks that the directory is
+ * removed anyway.
  *
  * The fatal error is a class declared twice, not the likelier memory
  * exhaustion: the builds of PHP 7.2 to 8.1 that setup-php installs on

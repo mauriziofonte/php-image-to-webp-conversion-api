@@ -311,4 +311,27 @@ final class ConfigTest extends TestCase
         self::assertSame('from-environment', $config->getV1ScriptName());
         self::assertSame($this->directory->path('var'), $config->getTemporaryDirectory());
     }
+
+    /**
+     * .env.example documents every key, set or commented out, plus the 1.x
+     * SCRIPT_NAME that process.php still reads; what it sets is a valid
+     * configuration.
+     */
+    public function testTheExampleDocumentsEveryKey(): void
+    {
+        $example = dirname(__DIR__, 3) . '/.env.example';
+        preg_match_all('/^;?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
+        $values = parse_ini_file($example);
+
+        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST'], $matches[1]);
+        self::assertSame([], array_diff(Config::KEYS, $matches[1]));
+        self::assertIsArray($values);
+        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys($values));
+        $strings = [];
+        foreach ($values as $key => $value) {
+            self::assertIsString($value);
+            $strings[(string) $key] = $value;
+        }
+        self::assertSame([$strings['API_KEY']], Config::fromArray($strings)->getApiKeys());
+    }
 }
