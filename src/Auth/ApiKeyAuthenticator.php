@@ -34,6 +34,10 @@ use Symfony\Component\HttpFoundation\Request;
  * NOT_CONFIGURED (a server misconfiguration, answered 503), never let
  * through, whatever it carries. 1.x let a request without a header in when
  * API_KEY was missing too (C-4).
+ *
+ * Every configured key is at least MINIMUM_KEY_LENGTH characters long: a
+ * shorter key can be guessed faster than a per-key rate limit slows the
+ * guessing down.
  */
 final class ApiKeyAuthenticator
 {
@@ -48,6 +52,11 @@ final class ApiKeyAuthenticator
 
     /** The request carries a key that is not configured. */
     public const INVALID_KEY = 'invalid_api_key';
+
+    /**
+     * Shortest accepted key, in characters (counted in bytes, after trimming).
+     */
+    public const MINIMUM_KEY_LENGTH = 16;
 
     private const KEY_HEADERS = ['X-API-Key', '-X-API-Key'];
 
@@ -64,15 +73,15 @@ final class ApiKeyAuthenticator
     /**
      * @param list<string> $keys the accepted keys, compared after trimming; empty refuses every request
      *
-     * @throws InvalidArgumentException when a key is blank
+     * @throws InvalidArgumentException when a key is shorter than MINIMUM_KEY_LENGTH (blank included)
      */
     public function __construct(array $keys)
     {
         $this->hmacKey = random_bytes(32);
         foreach ($keys as $key) {
             $key = trim($key);
-            if ($key === '') {
-                throw new InvalidArgumentException('An API key must not be blank');
+            if (strlen($key) < self::MINIMUM_KEY_LENGTH) {
+                throw new InvalidArgumentException(sprintf('An API key must be at least %d characters long', self::MINIMUM_KEY_LENGTH));
             }
             $this->digests[] = $this->digest($key);
         }

@@ -69,12 +69,17 @@ final class FrontControllerTest extends TestCase
 
     public function testAcceptsABearerKey(): void
     {
-        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '127.0.0.1', 'API_KEY' => 'k1', 'API_KEYS' => 'k2,k3']);
+        $server = $this->start([
+            'TEMP_DIR' => $this->directory->path('temp'),
+            'TRUSTED_PROXIES' => '127.0.0.1',
+            'API_KEY' => 'first-key-0123456789',
+            'API_KEYS' => 'second-key-0123456789,third-key-0123456789',
+        ]);
         $https = ['X-Forwarded-Proto' => 'https'];
 
-        self::assertSame(501, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer k3'])['status'], $server->getOutput());
-        self::assertSame(401, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer k4'])['status']);
-        self::assertSame(200, $server->request('GET', '/metrics', $https + ['X-API-Key' => 'k1'])['status']);
+        self::assertSame(501, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer third-key-0123456789'])['status'], $server->getOutput());
+        self::assertSame(401, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer fourth-key-0123456789'])['status']);
+        self::assertSame(200, $server->request('GET', '/metrics', $https + ['X-API-Key' => 'first-key-0123456789'])['status']);
     }
 
     /**
@@ -97,7 +102,7 @@ final class FrontControllerTest extends TestCase
 
     public function testRefusesPlainHttpUnlessATrustedProxySaysOtherwise(): void
     {
-        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '192.0.2.1', 'API_KEY' => 'k1']);
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '192.0.2.1', 'API_KEY' => 'first-key-0123456789']);
 
         $plain = $server->request('POST', '/v2/convert');
         $untrusted = $server->request('POST', '/v2/convert', ['X-Forwarded-Proto' => 'https']);
@@ -120,6 +125,24 @@ final class FrontControllerTest extends TestCase
         self::assertStringContainsString('"message":"Invalid configuration"', $server->getOutput());
         self::assertStringContainsString('V1_SCRIPT_NAME must be one URL path segment', $server->getOutput());
         self::assertStringContainsString('TEMP_DIR must be an absolute path', $server->getOutput());
+    }
+
+    /**
+     * A short key makes the configuration invalid: every request, the one
+     * that presents that very key included, gets the generic 503, and the
+     * log names the problem without the key.
+     */
+    public function testRefusesAShortKey(): void
+    {
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '127.0.0.1', 'API_KEY' => 'short-key-xyz']);
+
+        $response = $server->request('POST', '/v2/convert', ['X-Forwarded-Proto' => 'https', 'X-API-Key' => 'short-key-xyz']);
+
+        self::assertSame(503, $response['status'], $server->getOutput());
+        self::assertStringContainsString('"code":"invalid_configuration"', $response['body']);
+        self::assertSame(503, $server->request('GET', '/healthz')['status']);
+        self::assertStringContainsString('API_KEY must be at least 16 characters long', $server->getOutput());
+        self::assertStringNotContainsString('short-key-xyz', $server->getOutput());
     }
 
     public function testRefusesATemporaryDirectoryInsideTheWebRoot(): void

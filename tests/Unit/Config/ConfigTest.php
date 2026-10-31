@@ -134,11 +134,61 @@ final class ConfigTest extends TestCase
     {
         $config = Config::fromArray([
             'API_KEY' => ' an example api key, very secret ',
-            'API_KEYS' => 'next-key, ,other-key,next-key',
+            'API_KEYS' => 'next-key-0123456789, ,other-key-0123456789,next-key-0123456789',
         ]);
 
-        self::assertSame(['an example api key, very secret', 'next-key', 'other-key'], $config->getApiKeys());
-        self::assertSame(['k1', 'k2'], Config::fromArray(['API_KEY' => 'k1', 'API_KEYS' => 'k1,k2'])->getApiKeys());
+        self::assertSame(['an example api key, very secret', 'next-key-0123456789', 'other-key-0123456789'], $config->getApiKeys());
+        self::assertSame(
+            ['first-key-0123456789', 'second-key-0123456789'],
+            Config::fromArray(['API_KEY' => 'first-key-0123456789', 'API_KEYS' => 'first-key-0123456789,second-key-0123456789'])->getApiKeys()
+        );
+    }
+
+    public function testAcceptsAKeyOfTheMinimumLength(): void
+    {
+        $key = str_repeat('k', 16);
+
+        self::assertSame([$key], Config::fromArray(['API_KEY' => ' ' . $key . ' '])->getApiKeys());
+        self::assertSame([$key], Config::fromArray(['API_KEYS' => $key])->getApiKeys());
+    }
+
+    /**
+     * @return array<string, array{array<string, string>, string}>
+     */
+    public static function provideShortKeys(): array
+    {
+        $fifteen = str_repeat('s', 15);
+
+        return [
+            'API_KEY' => [['API_KEY' => 'a'], 'API_KEY must be at least 16 characters long'],
+            'API_KEY of 15 characters' => [['API_KEY' => $fifteen], 'API_KEY must be at least 16 characters long'],
+            'API_KEY of 15 characters and blanks' => [['API_KEY' => '  ' . $fifteen . "\t"], 'API_KEY must be at least 16 characters long'],
+            'second key of API_KEYS' => [
+                ['API_KEYS' => 'first-key-0123456789, , ' . $fifteen . ',third-key-0123456789'],
+                'API_KEYS must list keys of at least 16 characters: key 2 is shorter',
+            ],
+        ];
+    }
+
+    /**
+     * A key shorter than 16 characters can be guessed faster than a rate
+     * limit slows the guessing down: the configuration is invalid, and the
+     * error names the setting, never the key.
+     *
+     * @dataProvider provideShortKeys
+     *
+     * @param array<string, string> $values
+     */
+    #[DataProvider('provideShortKeys')]
+    public function testRefusesShortKeys(array $values, string $error): void
+    {
+        try {
+            Config::fromArray($values);
+            self::fail('A short key is refused');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertSame([$error], $exception->getErrors());
+            self::assertStringNotContainsString('sssss', $exception->getMessage());
+        }
     }
 
     public function testRefusesAnInvalidBoolean(): void

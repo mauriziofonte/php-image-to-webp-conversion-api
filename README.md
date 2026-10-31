@@ -27,7 +27,7 @@ By using this external microservice, you can **offload the conversion process to
 ## Configuring the `.env` File
 
 * **SCRIPT\_NAME**: The endpoint name that will be whitelisted to allow requests to the microservice.
-* **API\_KEY**: The API key that must be provided via the `X-API-Key` header.
+* **API\_KEY**: The API key that must be provided via the `X-API-Key` header. Use at least 16 characters: the 2.x service refuses shorter keys.
 
 **Example:**
 

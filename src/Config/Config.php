@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Config;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\IpRange;
@@ -40,8 +41,10 @@ use Mfonte\ImageConversionApi\Http\IpRange;
  *   included, as in 1.x.
  * - API_KEYS: further accepted keys, separated by commas, for rotation: add
  *   the new key, move the clients, then remove the old one.
- *   With neither set, every protected endpoint answers 503
- *   (authentication_not_configured): the service fails closed.
+ *   Every key is at least 16 characters long (counted in bytes): a shorter
+ *   one makes the configuration invalid, and the service answers 503
+ *   invalid_configuration. With neither set, every protected endpoint
+ *   answers 503 authentication_not_configured: the service fails closed.
  * - IP_ALLOWLIST: comma-separated IPs and CIDR blocks (IPv4 and IPv6) of
  *   the clients allowed on the protected endpoints, in addition to the API
  *   key; the client address is taken from X-Forwarded-For only behind
@@ -185,13 +188,25 @@ final class Config
             $errors[] = 'IP_ALLOWLIST must list IP addresses and CIDR blocks separated by commas: ' . $exception->getMessage();
         }
 
+        $minimumLength = ApiKeyAuthenticator::MINIMUM_KEY_LENGTH;
         $apiKey = self::value($values, 'API_KEY');
         if ($apiKey !== null) {
+            if (strlen($apiKey) < $minimumLength) {
+                $errors[] = sprintf('API_KEY must be at least %d characters long', $minimumLength);
+            }
             $config->apiKeys[] = $apiKey;
         }
+        $position = 0;
         foreach (explode(',', (string) self::value($values, 'API_KEYS')) as $key) {
             $key = trim($key);
-            if ($key !== '' && !in_array($key, $config->apiKeys, true)) {
+            if ($key === '') {
+                continue;
+            }
+            ++$position;
+            if (strlen($key) < $minimumLength) {
+                // The position, never the key: the message ends up in the log.
+                $errors[] = sprintf('API_KEYS must list keys of at least %d characters: key %d is shorter', $minimumLength, $position);
+            } elseif (!in_array($key, $config->apiKeys, true)) {
                 $config->apiKeys[] = $key;
             }
         }

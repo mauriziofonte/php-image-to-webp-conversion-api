@@ -169,6 +169,23 @@ final class ApiKeyAuthenticatorTest extends TestCase
         new ApiKeyAuthenticator([self::KEY, ' ']);
     }
 
+    public function testRefusesAKeyShorterThanTheMinimum(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('An API key must be at least 16 characters long');
+
+        new ApiKeyAuthenticator([self::KEY, ' ' . str_repeat('k', ApiKeyAuthenticator::MINIMUM_KEY_LENGTH - 1) . ' ']);
+    }
+
+    public function testAcceptsAKeyOfTheMinimumLength(): void
+    {
+        $key = str_repeat('k', ApiKeyAuthenticator::MINIMUM_KEY_LENGTH);
+
+        $authenticator = new ApiKeyAuthenticator([$key]);
+
+        self::assertSame(ApiKeyAuthenticator::AUTHENTICATED, $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => $key])));
+    }
+
     public function testConfiguredKeysAreTrimmed(): void
     {
         $authenticator = new ApiKeyAuthenticator(['  ' . self::KEY . "\n"]);

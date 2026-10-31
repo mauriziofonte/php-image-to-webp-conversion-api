@@ -30,7 +30,7 @@ final class HttpsEnforcementTest extends TestCase
 {
     private const LOAD_BALANCER = '10.0.0.5';
 
-    private const API_KEY = 'https-test-key';
+    private const API_KEY = 'https-test-key-0123456789';
 
     /**
      * @var TemporaryDirectory

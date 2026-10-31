@@ -38,7 +38,7 @@ final class KernelTest extends TestCase
 {
     private const SCRIPT_NAME = 'convert-now';
 
-    private const API_KEY = 'kernel-test-key';
+    private const API_KEY = 'kernel-test-key-0123456789';
 
     /**
      * @var TemporaryDirectory

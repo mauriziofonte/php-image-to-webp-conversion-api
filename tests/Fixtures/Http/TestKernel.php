@@ -24,7 +24,7 @@ final class TestKernel
     /**
      * The only API key the kernel accepts.
      */
-    public const API_KEY = 'test-api-key';
+    public const API_KEY = 'test-api-key-0123456789';
 
     private function __construct()
     {
