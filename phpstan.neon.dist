@@ -2,7 +2,7 @@
 # phpstan-php85.neon.dist includes this file and analyses as PHP 8.5;
 # `composer analyse` runs both. No baseline: every finding is fixed, or
 # ignored inline with a one-line justification. Files of the previous major
-# version outside src/ and tests/ are not analysed until they are replaced.
+# version (process.php) are not analysed until they are replaced.
 
 # The deprecation rules report calls deprecated in the analysed PHP version
 # (curl_close() and finfo_close() on PHP 8.5) or in the dependencies; the
@@ -22,6 +22,7 @@ parameters:
     level: max
     phpVersion: 70205
     paths:
+        - public
         - src
         - tests
         - tools/require-tool.php

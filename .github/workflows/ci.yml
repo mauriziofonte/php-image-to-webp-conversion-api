@@ -79,7 +79,7 @@ jobs:
           while IFS= read -r -d '' file; do
             count=$((count + 1))
             output="$(php -l "$file" 2>&1)" || { printf '%s\n' "$output"; status=1; }
-          done < <(find src tests tools/require-tool.php -type f -name '*.php' -print0 | sort -z)
+          done < <(find public src tests tools/require-tool.php -type f -name '*.php' -print0 | sort -z)
           echo "Linted $count PHP files with PHP $(php -r 'echo PHP_VERSION;')"
           exit "$status"
 
