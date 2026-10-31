@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Tests\Fixtures\Http;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
@@ -19,6 +20,11 @@ use Psr\Log\NullLogger;
  */
 final class TestKernel
 {
+    /**
+     * The only API key the kernel accepts.
+     */
+    public const API_KEY = 'test-api-key';
+
     private function __construct()
     {
     }
@@ -33,6 +39,7 @@ final class TestKernel
             new Router($routes),
             new TrustedProxies(),
             true,
+            new ApiKeyAuthenticator([self::API_KEY]),
             new RequestDirectories($temporaryDirectory),
             new ResponseFactory(),
             $logger ?? new NullLogger()

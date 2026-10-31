@@ -48,6 +48,7 @@ final class ConfigTest extends TestCase
         self::assertSame(sys_get_temp_dir(), $config->getTemporaryDirectory());
         self::assertSame([], $config->getTrustedProxies());
         self::assertTrue($config->isHttpsRequired());
+        self::assertSame([], $config->getApiKeys());
     }
 
     /**
@@ -76,6 +77,7 @@ final class ConfigTest extends TestCase
         self::assertSame(sys_get_temp_dir(), $config->getTemporaryDirectory());
         self::assertSame([], $config->getTrustedProxies());
         self::assertTrue($config->isHttpsRequired());
+        self::assertSame([], $config->getApiKeys());
     }
 
     public function testReadsTheValues(): void
@@ -118,6 +120,21 @@ final class ConfigTest extends TestCase
     public function testReadsBooleans(string $value, bool $expected): void
     {
         self::assertSame($expected, Config::fromArray(['REQUIRE_HTTPS' => $value])->isHttpsRequired());
+    }
+
+    /**
+     * API_KEY is one key, commas included (the 1.x example key has one);
+     * API_KEYS adds keys separated by commas, for rotation.
+     */
+    public function testReadsTheApiKeys(): void
+    {
+        $config = Config::fromArray([
+            'API_KEY' => ' an example api key, very secret ',
+            'API_KEYS' => 'next-key, ,other-key,next-key',
+        ]);
+
+        self::assertSame(['an example api key, very secret', 'next-key', 'other-key'], $config->getApiKeys());
+        self::assertSame(['k1', 'k2'], Config::fromArray(['API_KEY' => 'k1', 'API_KEYS' => 'k1,k2'])->getApiKeys());
     }
 
     public function testRefusesAnInvalidBoolean(): void

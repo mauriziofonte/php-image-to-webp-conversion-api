@@ -9,8 +9,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Answers the requests of one route. The kernel calls it only after the
- * request passed the checks of the route (HTTPS, method), and turns any
- * exception it throws into a 500 response.
+ * request passed the checks of the route (HTTPS and API key unless the
+ * route is public, method), and turns any exception it throws into a 500
+ * response.
  */
 interface RequestHandlerInterface
 {

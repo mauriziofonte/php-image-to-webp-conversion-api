@@ -27,6 +27,9 @@ final class ResponseFactoryTest extends TestCase
             'not implemented' => ['notImplemented', 501, ResponseFactory::ERROR_NOT_IMPLEMENTED],
             'internal error' => ['internalError', 500, ResponseFactory::ERROR_INTERNAL],
             'invalid configuration' => ['invalidConfiguration', 503, ResponseFactory::ERROR_INVALID_CONFIGURATION],
+            'authentication not configured' => ['authenticationNotConfigured', 503, ResponseFactory::ERROR_AUTHENTICATION_NOT_CONFIGURED],
+            'missing API key' => ['missingApiKey', 401, ResponseFactory::ERROR_MISSING_API_KEY],
+            'invalid API key' => ['invalidApiKey', 401, ResponseFactory::ERROR_INVALID_API_KEY],
         ];
     }
 
@@ -52,6 +55,14 @@ final class ResponseFactoryTest extends TestCase
         self::assertSame(405, $response->getStatusCode());
         self::assertSame('GET, HEAD', $response->headers->get('Allow'));
         self::assertSame(ResponseFactory::ERROR_METHOD_NOT_ALLOWED, self::decode($response)['error']['code']);
+    }
+
+    public function testUnauthorizedResponsesCarryTheBearerChallenge(): void
+    {
+        $factory = new ResponseFactory();
+
+        self::assertSame('Bearer realm="image-conversion-api"', $factory->missingApiKey()->headers->get('WWW-Authenticate'));
+        self::assertSame('Bearer realm="image-conversion-api", error="invalid_token"', $factory->invalidApiKey()->headers->get('WWW-Authenticate'));
     }
 
     public function testErrorBodyShape(): void

@@ -30,6 +30,8 @@ final class HttpsEnforcementTest extends TestCase
 {
     private const LOAD_BALANCER = '10.0.0.5';
 
+    private const API_KEY = 'https-test-key';
+
     /**
      * @var TemporaryDirectory
      */
@@ -129,12 +131,15 @@ final class HttpsEnforcementTest extends TestCase
     }
 
     /**
+     * Handles a request that carries an accepted API key.
+     *
      * @param array<string, string>      $server
      * @param array<string, string|null> $config
      */
     private function handle(string $method, string $uri, array $server = [], array $config = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path()];
+        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY];
+        $server += ['HTTP_X_API_KEY' => self::API_KEY];
 
         return KernelFactory::create(Config::fromArray($values), new NullLogger())
             ->handle(Request::create($uri, $method, [], [], [], $server));

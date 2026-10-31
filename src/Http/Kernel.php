@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Http;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -15,9 +16,14 @@ use Symfony\Component\HttpFoundation\Response;
  *    paths included) must have reached the service over HTTPS, as
  *    TrustedProxies tells it, unless REQUIRE_HTTPS is off: otherwise 400
  *    https_required, before anything else is revealed;
- * 2. the route is looked up by exact path: none answers 404, a route that
+ * 2. such a path also needs an accepted API key (ApiKeyAuthenticator):
+ *    without any configured key 503 authentication_not_configured, without
+ *    a key 401 missing_api_key, with another key 401 invalid_api_key. An
+ *    unauthenticated client therefore cannot tell which paths exist, as in
+ *    1.x, which checked the key before the endpoint name;
+ * 3. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
- * 3. the handler of the route runs with a temporary directory of its own,
+ * 4. the handler of the route runs with a temporary directory of its own,
  *    which is removed when the request ends, whatever happened (see
  *    RequestDirectories for fatal errors); an exception it throws is logged
  *    and answered with a generic 500.
@@ -48,6 +54,11 @@ final class Kernel
     private $httpsRequired;
 
     /**
+     * @var ApiKeyAuthenticator
+     */
+    private $authenticator;
+
+    /**
      * @var RequestDirectories
      */
     private $directories;
@@ -69,6 +80,7 @@ final class Kernel
         Router $router,
         TrustedProxies $proxies,
         bool $httpsRequired,
+        ApiKeyAuthenticator $authenticator,
         RequestDirectories $directories,
         ResponseFactory $responses,
         LoggerInterface $logger
@@ -76,6 +88,7 @@ final class Kernel
         $this->router = $router;
         $this->proxies = $proxies;
         $this->httpsRequired = $httpsRequired;
+        $this->authenticator = $authenticator;
         $this->directories = $directories;
         $this->responses = $responses;
         $this->logger = $logger;
@@ -96,9 +109,11 @@ final class Kernel
     private function dispatch(Request $request, string $method): Response
     {
         $route = $this->router->match($request->getPathInfo());
-        $public = $route !== null && $route->isPublic();
-        if (!$public && $this->httpsRequired && !$this->proxies->isSecure($request)) {
-            return $this->responses->httpsRequired();
+        if ($route === null || !$route->isPublic()) {
+            $refusal = $this->refuseAccess($request);
+            if ($refusal !== null) {
+                return $refusal;
+            }
         }
         if ($route === null) {
             return $this->responses->notFound();
@@ -108,6 +123,30 @@ final class Kernel
         }
 
         return $this->run($route, $request);
+    }
+
+    /**
+     * The response that refuses a request to a protected path; null when
+     * the request may go on.
+     */
+    private function refuseAccess(Request $request): ?Response
+    {
+        if ($this->httpsRequired && !$this->proxies->isSecure($request)) {
+            return $this->responses->httpsRequired();
+        }
+
+        switch ($this->authenticator->authenticate($request)) {
+            case ApiKeyAuthenticator::AUTHENTICATED:
+                return null;
+            case ApiKeyAuthenticator::NOT_CONFIGURED:
+                $this->logger->critical('No API key is configured (API_KEY, API_KEYS): every protected request is refused');
+
+                return $this->responses->authenticationNotConfigured();
+            case ApiKeyAuthenticator::MISSING_KEY:
+                return $this->responses->missingApiKey();
+            default:
+                return $this->responses->invalidApiKey();
+        }
     }
 
     private function run(Route $route, Request $request): Response

@@ -36,6 +36,12 @@ use Mfonte\ImageConversionApi\Http\IpRange;
  * - REQUIRE_HTTPS: whether the protected endpoints refuse requests that did
  *   not reach the service (or its trusted proxy) over HTTPS: true, false,
  *   1, 0, yes, no, on or off. Default: true.
+ * - API_KEY: one accepted API key, taken as it is (trimmed), commas
+ *   included, as in 1.x.
+ * - API_KEYS: further accepted keys, separated by commas, for rotation: add
+ *   the new key, move the clients, then remove the old one.
+ *   With neither set, every protected endpoint answers 503
+ *   (authentication_not_configured): the service fails closed.
  */
 final class Config
 {
@@ -47,6 +53,8 @@ final class Config
         'TEMP_DIR',
         'TRUSTED_PROXIES',
         'REQUIRE_HTTPS',
+        'API_KEY',
+        'API_KEYS',
     ];
 
     private const BOOLEANS = [
@@ -79,6 +87,11 @@ final class Config
      * @var bool
      */
     private $httpsRequired = true;
+
+    /**
+     * @var list<string>
+     */
+    private $apiKeys = [];
 
     private function __construct()
     {
@@ -156,6 +169,17 @@ final class Config
             }
         }
 
+        $apiKey = self::value($values, 'API_KEY');
+        if ($apiKey !== null) {
+            $config->apiKeys[] = $apiKey;
+        }
+        foreach (explode(',', (string) self::value($values, 'API_KEYS')) as $key) {
+            $key = trim($key);
+            if ($key !== '' && !in_array($key, $config->apiKeys, true)) {
+                $config->apiKeys[] = $key;
+            }
+        }
+
         if ($errors !== []) {
             throw new InvalidConfigurationException($errors);
         }
@@ -195,6 +219,17 @@ final class Config
     public function isHttpsRequired(): bool
     {
         return $this->httpsRequired;
+    }
+
+    /**
+     * API_KEY and API_KEYS: the accepted API keys, trimmed and without
+     * duplicates; empty when none is configured.
+     *
+     * @return list<string>
+     */
+    public function getApiKeys(): array
+    {
+        return $this->apiKeys;
     }
 
     /**

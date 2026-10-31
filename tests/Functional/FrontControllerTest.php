@@ -52,8 +52,9 @@ final class FrontControllerTest extends TestCase
             'V1_SCRIPT_NAME' => 'convert-now',
             'TEMP_DIR' => $this->directory->path('temp'),
             'TRUSTED_PROXIES' => '127.0.0.1',
+            'API_KEY' => 'front-controller-key',
         ]);
-        $https = ['X-Forwarded-Proto' => 'https'];
+        $https = ['X-Forwarded-Proto' => 'https', 'X-Api-Key' => 'front-controller-key'];
 
         $health = $server->request('GET', '/healthz');
         self::assertSame(200, $health['status'], $server->getOutput());
@@ -66,9 +67,37 @@ final class FrontControllerTest extends TestCase
         self::assertDoesNotMatchRegularExpression('/PHP (?:Fatal|Parse|Warning|Notice|Deprecated)/', $server->getOutput());
     }
 
+    public function testAcceptsABearerKey(): void
+    {
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '127.0.0.1', 'API_KEY' => 'k1', 'API_KEYS' => 'k2,k3']);
+        $https = ['X-Forwarded-Proto' => 'https'];
+
+        self::assertSame(501, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer k3'])['status'], $server->getOutput());
+        self::assertSame(401, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer k4'])['status']);
+        self::assertSame(200, $server->request('GET', '/metrics', $https + ['X-API-Key' => 'k1'])['status']);
+    }
+
+    /**
+     * Fail closed (finding C-4): without API_KEY and API_KEYS, every
+     * protected request is refused with 503, while /healthz still answers.
+     */
+    public function testRefusesEveryProtectedRequestWithoutAConfiguredKey(): void
+    {
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '127.0.0.1', 'API_KEY' => '']);
+        $https = ['X-Forwarded-Proto' => 'https', 'X-API-Key' => ''];
+
+        foreach ([['POST', '/v2/convert'], ['GET', '/metrics'], ['GET', '/missing']] as list($method, $path)) {
+            $response = $server->request($method, $path, $https);
+            self::assertSame(503, $response['status'], $server->getOutput());
+            self::assertStringContainsString('"code":"authentication_not_configured"', $response['body']);
+        }
+        self::assertSame(200, $server->request('GET', '/healthz')['status']);
+        self::assertStringContainsString('No API key is configured', $server->getOutput());
+    }
+
     public function testRefusesPlainHttpUnlessATrustedProxySaysOtherwise(): void
     {
-        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '192.0.2.1']);
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '192.0.2.1', 'API_KEY' => 'k1']);
 
         $plain = $server->request('POST', '/v2/convert');
         $untrusted = $server->request('POST', '/v2/convert', ['X-Forwarded-Proto' => 'https']);

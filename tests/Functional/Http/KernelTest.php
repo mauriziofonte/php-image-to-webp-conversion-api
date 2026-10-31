@@ -38,6 +38,8 @@ final class KernelTest extends TestCase
 {
     private const SCRIPT_NAME = 'convert-now';
 
+    private const API_KEY = 'kernel-test-key';
+
     /**
      * @var TemporaryDirectory
      */
@@ -211,13 +213,16 @@ final class KernelTest extends TestCase
     }
 
     /**
+     * Handles an authenticated HTTPS request.
+     *
      * @param array<string, string|null> $config overrides of the test configuration
      * @param array<string, string>      $server
      */
     private function handle(string $method, string $path, array $config = [], array $server = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path()];
+        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY];
         $kernel = KernelFactory::create(Config::fromArray($values), $this->logger);
+        $server += ['HTTP_AUTHORIZATION' => 'Bearer ' . self::API_KEY];
 
         return $kernel->handle(Request::create('https://api.example.test' . $path, $method, [], [], [], $server));
     }
