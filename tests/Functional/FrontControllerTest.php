@@ -12,7 +12,9 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 /**
  * public/index.php served by PHP's built-in web server: the composition root
  * reads the environment, builds the kernel and sends its responses, and
- * answers a generic 503 when the configuration is invalid.
+ * answers a generic 503 when the configuration is invalid. The server speaks
+ * plain HTTP: the test plays the TLS-terminating proxy at 127.0.0.1, which
+ * TRUSTED_PROXIES trusts, and sends X-Forwarded-Proto.
  *
  * @coversNothing
  */
@@ -46,17 +48,35 @@ final class FrontControllerTest extends TestCase
 
     public function testServesTheRoutesOfTheKernel(): void
     {
-        $server = $this->start(['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path('temp')]);
+        $server = $this->start([
+            'V1_SCRIPT_NAME' => 'convert-now',
+            'TEMP_DIR' => $this->directory->path('temp'),
+            'TRUSTED_PROXIES' => '127.0.0.1',
+        ]);
+        $https = ['X-Forwarded-Proto' => 'https'];
 
         $health = $server->request('GET', '/healthz');
         self::assertSame(200, $health['status'], $server->getOutput());
         self::assertSame('{"status":"ok"}', $health['body']);
         self::assertSame('application/json', $health['headers']['content-type'] ?? null);
 
-        self::assertSame(501, $server->request('POST', '/v1/convert-now')['status']);
-        self::assertSame(501, $server->request('POST', '/v2/convert')['status']);
-        self::assertSame(404, $server->request('GET', '/missing')['status']);
+        self::assertSame(501, $server->request('POST', '/v1/convert-now', $https)['status']);
+        self::assertSame(501, $server->request('POST', '/v2/convert', $https)['status']);
+        self::assertSame(404, $server->request('GET', '/missing', $https)['status']);
         self::assertDoesNotMatchRegularExpression('/PHP (?:Fatal|Parse|Warning|Notice|Deprecated)/', $server->getOutput());
+    }
+
+    public function testRefusesPlainHttpUnlessATrustedProxySaysOtherwise(): void
+    {
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '192.0.2.1']);
+
+        $plain = $server->request('POST', '/v2/convert');
+        $untrusted = $server->request('POST', '/v2/convert', ['X-Forwarded-Proto' => 'https']);
+
+        self::assertSame(400, $plain['status'], $server->getOutput());
+        self::assertSame('{"error":{"code":"https_required","message":"This endpoint must be called over HTTPS."}}', $plain['body']);
+        self::assertSame(400, $untrusted['status'], 'X-Forwarded-Proto from a peer that is not a trusted proxy');
+        self::assertSame(200, $server->request('GET', '/healthz')['status'], '/healthz answers over HTTP');
     }
 
     public function testAnswers503AndLogsTheErrorsWhenTheConfigurationIsInvalid(): void

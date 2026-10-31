@@ -11,9 +11,13 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Turns a request into a response:
  *
- * 1. the route is looked up by exact path: none answers 404, a route that
+ * 1. a path that is not a public route (every path but /healthz, unknown
+ *    paths included) must have reached the service over HTTPS, as
+ *    TrustedProxies tells it, unless REQUIRE_HTTPS is off: otherwise 400
+ *    https_required, before anything else is revealed;
+ * 2. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
- * 2. the handler of the route runs with a temporary directory of its own,
+ * 3. the handler of the route runs with a temporary directory of its own,
  *    which is removed when the request ends, whatever happened (see
  *    RequestDirectories for fatal errors); an exception it throws is logged
  *    and answered with a generic 500.
@@ -34,6 +38,16 @@ final class Kernel
     private $router;
 
     /**
+     * @var TrustedProxies
+     */
+    private $proxies;
+
+    /**
+     * @var bool
+     */
+    private $httpsRequired;
+
+    /**
      * @var RequestDirectories
      */
     private $directories;
@@ -48,13 +62,20 @@ final class Kernel
      */
     private $logger;
 
+    /**
+     * @param bool $httpsRequired whether protected paths refuse requests that did not arrive over HTTPS
+     */
     public function __construct(
         Router $router,
+        TrustedProxies $proxies,
+        bool $httpsRequired,
         RequestDirectories $directories,
         ResponseFactory $responses,
         LoggerInterface $logger
     ) {
         $this->router = $router;
+        $this->proxies = $proxies;
+        $this->httpsRequired = $httpsRequired;
         $this->directories = $directories;
         $this->responses = $responses;
         $this->logger = $logger;
@@ -75,6 +96,10 @@ final class Kernel
     private function dispatch(Request $request, string $method): Response
     {
         $route = $this->router->match($request->getPathInfo());
+        $public = $route !== null && $route->isPublic();
+        if (!$public && $this->httpsRequired && !$this->proxies->isSecure($request)) {
+            return $this->responses->httpsRequired();
+        }
         if ($route === null) {
             return $this->responses->notFound();
         }

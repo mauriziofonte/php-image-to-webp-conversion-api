@@ -46,6 +46,8 @@ final class ConfigTest extends TestCase
 
         self::assertNull($config->getV1ScriptName());
         self::assertSame(sys_get_temp_dir(), $config->getTemporaryDirectory());
+        self::assertSame([], $config->getTrustedProxies());
+        self::assertTrue($config->isHttpsRequired());
     }
 
     /**
@@ -68,10 +70,12 @@ final class ConfigTest extends TestCase
     #[DataProvider('provideUnsetValues')]
     public function testUnsetValuesTakeTheDefault(?string $value): void
     {
-        $config = Config::fromArray(['V1_SCRIPT_NAME' => $value, 'TEMP_DIR' => $value]);
+        $config = Config::fromArray(array_fill_keys(Config::KEYS, $value));
 
         self::assertNull($config->getV1ScriptName());
         self::assertSame(sys_get_temp_dir(), $config->getTemporaryDirectory());
+        self::assertSame([], $config->getTrustedProxies());
+        self::assertTrue($config->isHttpsRequired());
     }
 
     public function testReadsTheValues(): void
@@ -79,10 +83,57 @@ final class ConfigTest extends TestCase
         $config = Config::fromArray([
             'V1_SCRIPT_NAME' => ' convert-now ',
             'TEMP_DIR' => $this->directory->path('var/tmp'),
+            'TRUSTED_PROXIES' => '10.0.0.0/8, 192.0.2.1,2001:db8::/32',
+            'REQUIRE_HTTPS' => 'false',
         ], [$this->directory->path('public')]);
 
         self::assertSame('convert-now', $config->getV1ScriptName());
         self::assertSame($this->directory->path('var/tmp'), $config->getTemporaryDirectory());
+        self::assertSame(['10.0.0.0/8', '192.0.2.1/32', '2001:db8::/32'], array_map('strval', $config->getTrustedProxies()));
+        self::assertFalse($config->isHttpsRequired());
+    }
+
+    /**
+     * @return array<string, array{string, bool}>
+     */
+    public static function provideBooleans(): array
+    {
+        return [
+            'true' => ['true', true],
+            'TRUE' => ['TRUE', true],
+            'one' => ['1', true],
+            'yes' => ['yes', true],
+            'on' => ['On', true],
+            'false' => ['false', false],
+            'zero' => ['0', false],
+            'no' => ['no', false],
+            'off' => ['OFF', false],
+        ];
+    }
+
+    /**
+     * @dataProvider provideBooleans
+     */
+    #[DataProvider('provideBooleans')]
+    public function testReadsBooleans(string $value, bool $expected): void
+    {
+        self::assertSame($expected, Config::fromArray(['REQUIRE_HTTPS' => $value])->isHttpsRequired());
+    }
+
+    public function testRefusesAnInvalidBoolean(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('REQUIRE_HTTPS must be true or false');
+
+        Config::fromArray(['REQUIRE_HTTPS' => 'sometimes']);
+    }
+
+    public function testRefusesAnInvalidTrustedProxy(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('TRUSTED_PROXIES must list IP addresses and CIDR blocks separated by commas: "lb.example" is not');
+
+        Config::fromArray(['TRUSTED_PROXIES' => '10.0.0.1, lb.example']);
     }
 
     /**
@@ -158,10 +209,10 @@ final class ConfigTest extends TestCase
     public function testListsEveryError(): void
     {
         try {
-            Config::fromArray(['V1_SCRIPT_NAME' => 'a/b', 'TEMP_DIR' => 'relative']);
+            Config::fromArray(['V1_SCRIPT_NAME' => 'a/b', 'TEMP_DIR' => 'relative', 'TRUSTED_PROXIES' => 'x', 'REQUIRE_HTTPS' => 'x']);
             self::fail('An InvalidConfigurationException was expected');
         } catch (InvalidConfigurationException $exception) {
-            self::assertCount(2, $exception->getErrors());
+            self::assertCount(4, $exception->getErrors());
             self::assertStringStartsWith('Invalid configuration: V1_SCRIPT_NAME', $exception->getMessage());
         }
     }

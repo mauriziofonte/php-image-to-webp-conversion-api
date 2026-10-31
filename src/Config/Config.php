@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Config;
 
+use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
+use Mfonte\ImageConversionApi\Http\IpRange;
 
 /**
  * The configuration of the service, immutable and already validated.
@@ -27,6 +29,13 @@ use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
  *   temporary directories; created on first use when missing. It must be
  *   outside the web roots given to the factory methods (finding C-8).
  *   Default: the system temporary directory.
+ * - TRUSTED_PROXIES: comma-separated IPs and CIDR blocks (IPv4 and IPv6)
+ *   of the reverse proxies and load balancers whose X-Forwarded-Proto and
+ *   X-Forwarded-For headers are believed. Default: none, the headers are
+ *   ignored. The proxy CDN reads the same key with the same meaning.
+ * - REQUIRE_HTTPS: whether the protected endpoints refuse requests that did
+ *   not reach the service (or its trusted proxy) over HTTPS: true, false,
+ *   1, 0, yes, no, on or off. Default: true.
  */
 final class Config
 {
@@ -36,6 +45,19 @@ final class Config
     public const KEYS = [
         'V1_SCRIPT_NAME',
         'TEMP_DIR',
+        'TRUSTED_PROXIES',
+        'REQUIRE_HTTPS',
+    ];
+
+    private const BOOLEANS = [
+        'true' => true,
+        '1' => true,
+        'yes' => true,
+        'on' => true,
+        'false' => false,
+        '0' => false,
+        'no' => false,
+        'off' => false,
     ];
 
     /**
@@ -47,6 +69,16 @@ final class Config
      * @var string
      */
     private $temporaryDirectory;
+
+    /**
+     * @var list<IpRange>
+     */
+    private $trustedProxies = [];
+
+    /**
+     * @var bool
+     */
+    private $httpsRequired = true;
 
     private function __construct()
     {
@@ -108,6 +140,22 @@ final class Config
             }
         }
 
+        try {
+            $config->trustedProxies = IpRange::listFromString((string) self::value($values, 'TRUSTED_PROXIES'));
+        } catch (InvalidArgumentException $exception) {
+            $errors[] = 'TRUSTED_PROXIES must list IP addresses and CIDR blocks separated by commas: ' . $exception->getMessage();
+        }
+
+        $httpsRequired = self::value($values, 'REQUIRE_HTTPS');
+        if ($httpsRequired !== null) {
+            $boolean = self::BOOLEANS[strtolower($httpsRequired)] ?? null;
+            if ($boolean === null) {
+                $errors[] = 'REQUIRE_HTTPS must be true or false';
+            } else {
+                $config->httpsRequired = $boolean;
+            }
+        }
+
         if ($errors !== []) {
             throw new InvalidConfigurationException($errors);
         }
@@ -129,6 +177,24 @@ final class Config
     public function getTemporaryDirectory(): string
     {
         return $this->temporaryDirectory;
+    }
+
+    /**
+     * TRUSTED_PROXIES: the proxies whose forwarding headers are believed.
+     *
+     * @return list<IpRange>
+     */
+    public function getTrustedProxies(): array
+    {
+        return $this->trustedProxies;
+    }
+
+    /**
+     * REQUIRE_HTTPS: whether the protected endpoints refuse plain HTTP.
+     */
+    public function isHttpsRequired(): bool
+    {
+        return $this->httpsRequired;
     }
 
     /**

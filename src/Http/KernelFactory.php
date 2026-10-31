@@ -39,6 +39,8 @@ final class KernelFactory
 
         return new Kernel(
             new Router(self::routes($config, $responses)),
+            new TrustedProxies($config->getTrustedProxies()),
+            $config->isHttpsRequired(),
             new RequestDirectories($config->getTemporaryDirectory()),
             $responses,
             $logger

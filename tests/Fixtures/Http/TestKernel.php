@@ -9,6 +9,7 @@ use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Http\Route;
 use Mfonte\ImageConversionApi\Http\Router;
+use Mfonte\ImageConversionApi\Http\TrustedProxies;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -30,6 +31,8 @@ final class TestKernel
     {
         return new Kernel(
             new Router($routes),
+            new TrustedProxies(),
+            true,
             new RequestDirectories($temporaryDirectory),
             new ResponseFactory(),
             $logger ?? new NullLogger()
