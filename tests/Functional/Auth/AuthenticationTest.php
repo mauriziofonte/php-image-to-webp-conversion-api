@@ -100,8 +100,8 @@ final class AuthenticationTest extends TestCase
     public static function provideHeaderShapes(): array
     {
         return [
-            'Bearer (nginx and PHP-FPM, Apache mod_php)' => [['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
-            'Bearer through mod_rewrite (Apache with CGI or PHP-FPM)' => [['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
+            'Bearer (nginx and PHP-FPM, Apache with CGIPassAuth On)' => [['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
+            'Bearer through a rewrite rule (Apache, E=HTTP_AUTHORIZATION)' => [['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
             'X-API-Key / X-Api-Key' => [['HTTP_X_API_KEY' => self::KEY]],
             '-x-api-key (2.x proxy)' => [['HTTP__X_API_KEY' => self::KEY]],
         ];

@@ -12,9 +12,12 @@ use Symfony\Component\HttpFoundation\Request;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 /**
- * The header shapes that Apache (mod_php, CGI and PHP-FPM behind
- * mod_rewrite) and nginx with PHP-FPM produce, wrong keys, key rotation and
- * the missing configuration (findings C-1 and C-4).
+ * The header shapes that nginx with PHP-FPM and Apache with CGI or PHP-FPM
+ * produce, wrong keys, key rotation and the missing configuration (findings
+ * C-1 and C-4). Apache passes Authorization to CGI or PHP-FPM only with
+ * CGIPassAuth On (HTTP_AUTHORIZATION) or a rewrite rule that sets
+ * E=HTTP_AUTHORIZATION (REDIRECT_HTTP_AUTHORIZATION after an internal
+ * redirect): the public/.htaccess of API-8 must pass it one of these ways.
  *
  * @covers \Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator
  */
@@ -31,8 +34,8 @@ final class ApiKeyAuthenticatorTest extends TestCase
     public static function provideHeaderShapes(): array
     {
         return [
-            'Bearer, HTTP_AUTHORIZATION (nginx and PHP-FPM, Apache mod_php)' => [['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
-            'Bearer, only REDIRECT_HTTP_AUTHORIZATION (Apache, CGI or PHP-FPM, mod_rewrite)' => [['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
+            'Bearer, HTTP_AUTHORIZATION (nginx and PHP-FPM, Apache with CGIPassAuth On)' => [['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
+            'Bearer, only REDIRECT_HTTP_AUTHORIZATION (Apache rewrite rule with E=HTTP_AUTHORIZATION, internal redirect)' => [['REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
             'Bearer, empty HTTP_AUTHORIZATION next to REDIRECT_HTTP_AUTHORIZATION' => [['HTTP_AUTHORIZATION' => '', 'REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]],
             'bearer in lower case' => [['HTTP_AUTHORIZATION' => 'bearer ' . self::KEY]],
             'BEARER with extra blanks' => [['HTTP_AUTHORIZATION' => " BEARER \t " . self::KEY . '  ']],

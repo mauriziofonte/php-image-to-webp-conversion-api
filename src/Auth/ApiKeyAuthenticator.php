@@ -13,13 +13,21 @@ use Symfony\Component\HttpFoundation\Request;
  *
  * The key is read from the first of these that the request carries:
  *
- * 1. "Authorization: Bearer <key>" (scheme case-insensitive). PHP sees the
- *    header as HTTP_AUTHORIZATION, or, under Apache with CGI or PHP-FPM
- *    where the header is passed by a mod_rewrite rule, only as
- *    REDIRECT_HTTP_AUTHORIZATION. Another scheme (such as Basic, used by
- *    the web server itself) does not count as a key;
- * 2. "X-API-Key: <key>", the 1.x header. Header names are case-insensitive
- *    (Apache passes X-API-Key, PHP-FPM reports X-Api-Key, both reach PHP as
+ * 1. "Authorization: Bearer <key>" (scheme case-insensitive), from
+ *    HTTP_AUTHORIZATION or REDIRECT_HTTP_AUTHORIZATION. nginx passes every
+ *    request header to PHP-FPM, this one as HTTP_AUTHORIZATION. Apache does
+ *    not pass Authorization to CGI or PHP-FPM unless "CGIPassAuth On"
+ *    (Apache 2.4.13 and later; PHP then sees HTTP_AUTHORIZATION) or a
+ *    rewrite rule such as
+ *    "RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]" passes
+ *    it; after the internal redirect of a front-controller rewrite, the
+ *    variable that rule sets reaches PHP as REDIRECT_HTTP_AUTHORIZATION.
+ *    The public/.htaccess of API-8 must pass it one of these ways.
+ *    Another scheme (such as Basic, used by the web server itself) does not
+ *    count as a key;
+ * 2. "X-API-Key: <key>", the 1.x header, which every web server passes
+ *    without configuration. Header names are case-insensitive (Apache
+ *    passes X-API-Key, PHP-FPM reports X-Api-Key, both reach PHP as
  *    HTTP_X_API_KEY);
  * 3. "-x-api-key: <key>", what the 1.x .env.example told clients to send
  *    and the 2.x proxy sends (HTTP__X_API_KEY).
