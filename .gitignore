@@ -10,4 +10,4 @@ composer.lock
 
 # Runtime artefacts and local configuration
 /temp/
-.env
+/.env
