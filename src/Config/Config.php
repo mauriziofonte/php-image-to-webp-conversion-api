@@ -42,6 +42,10 @@ use Mfonte\ImageConversionApi\Http\IpRange;
  *   the new key, move the clients, then remove the old one.
  *   With neither set, every protected endpoint answers 503
  *   (authentication_not_configured): the service fails closed.
+ * - IP_ALLOWLIST: comma-separated IPs and CIDR blocks (IPv4 and IPv6) of
+ *   the clients allowed on the protected endpoints, in addition to the API
+ *   key; the client address is taken from X-Forwarded-For only behind
+ *   TRUSTED_PROXIES. Default: none, every address is allowed.
  */
 final class Config
 {
@@ -55,6 +59,7 @@ final class Config
         'REQUIRE_HTTPS',
         'API_KEY',
         'API_KEYS',
+        'IP_ALLOWLIST',
     ];
 
     private const BOOLEANS = [
@@ -92,6 +97,11 @@ final class Config
      * @var list<string>
      */
     private $apiKeys = [];
+
+    /**
+     * @var list<IpRange>
+     */
+    private $ipAllowlist = [];
 
     private function __construct()
     {
@@ -169,6 +179,12 @@ final class Config
             }
         }
 
+        try {
+            $config->ipAllowlist = IpRange::listFromString((string) self::value($values, 'IP_ALLOWLIST'));
+        } catch (InvalidArgumentException $exception) {
+            $errors[] = 'IP_ALLOWLIST must list IP addresses and CIDR blocks separated by commas: ' . $exception->getMessage();
+        }
+
         $apiKey = self::value($values, 'API_KEY');
         if ($apiKey !== null) {
             $config->apiKeys[] = $apiKey;
@@ -230,6 +246,17 @@ final class Config
     public function getApiKeys(): array
     {
         return $this->apiKeys;
+    }
+
+    /**
+     * IP_ALLOWLIST: the clients allowed on the protected endpoints; empty
+     * when every address is.
+     *
+     * @return list<IpRange>
+     */
+    public function getIpAllowlist(): array
+    {
+        return $this->ipAllowlist;
     }
 
     /**

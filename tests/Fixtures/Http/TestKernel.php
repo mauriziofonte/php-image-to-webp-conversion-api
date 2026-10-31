@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Tests\Fixtures\Http;
 
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
+use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
@@ -40,6 +41,7 @@ final class TestKernel
             new TrustedProxies(),
             true,
             new ApiKeyAuthenticator([self::API_KEY]),
+            new IpAllowlist(),
             new RequestDirectories($temporaryDirectory),
             new ResponseFactory(),
             $logger ?? new NullLogger()

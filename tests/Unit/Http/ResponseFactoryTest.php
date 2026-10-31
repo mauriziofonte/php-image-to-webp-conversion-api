@@ -30,6 +30,7 @@ final class ResponseFactoryTest extends TestCase
             'authentication not configured' => ['authenticationNotConfigured', 503, ResponseFactory::ERROR_AUTHENTICATION_NOT_CONFIGURED],
             'missing API key' => ['missingApiKey', 401, ResponseFactory::ERROR_MISSING_API_KEY],
             'invalid API key' => ['invalidApiKey', 401, ResponseFactory::ERROR_INVALID_API_KEY],
+            'IP not allowed' => ['ipNotAllowed', 403, ResponseFactory::ERROR_IP_NOT_ALLOWED],
         ];
     }
 

@@ -53,6 +53,9 @@ final class ResponseFactory
     /** 401: the request carries an API key that is not accepted. */
     public const ERROR_INVALID_API_KEY = 'invalid_api_key';
 
+    /** 403: IP_ALLOWLIST is set and the client address is not in it. */
+    public const ERROR_IP_NOT_ALLOWED = 'ip_not_allowed';
+
     /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */
@@ -156,6 +159,11 @@ final class ResponseFactory
             'The API key is not valid.',
             ['WWW-Authenticate' => 'Bearer realm="' . self::REALM . '", error="invalid_token"']
         );
+    }
+
+    public function ipNotAllowed(): Response
+    {
+        return $this->error(403, self::ERROR_IP_NOT_ALLOWED, 'Requests from this address are not allowed.');
     }
 
     /**

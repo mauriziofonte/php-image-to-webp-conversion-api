@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Http;
 
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
+use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,11 +17,14 @@ use Symfony\Component\HttpFoundation\Response;
  *    paths included) must have reached the service over HTTPS, as
  *    TrustedProxies tells it, unless REQUIRE_HTTPS is off: otherwise 400
  *    https_required, before anything else is revealed;
- * 2. such a path also needs an accepted API key (ApiKeyAuthenticator):
- *    without any configured key 503 authentication_not_configured, without
- *    a key 401 missing_api_key, with another key 401 invalid_api_key. An
- *    unauthenticated client therefore cannot tell which paths exist, as in
- *    1.x, which checked the key before the endpoint name;
+ * 2. such a path also needs an accepted API key (ApiKeyAuthenticator) and,
+ *    when IP_ALLOWLIST is set, a client address in it: without any
+ *    configured key 503 authentication_not_configured, from an address
+ *    outside the allowlist 403 ip_not_allowed (before the key is looked at,
+ *    so such clients cannot guess keys), without a key 401 missing_api_key,
+ *    with another key 401 invalid_api_key. An unauthenticated client
+ *    therefore cannot tell which paths exist, as in 1.x, which checked the
+ *    key before the endpoint name;
  * 3. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
  * 4. the handler of the route runs with a temporary directory of its own,
@@ -59,6 +63,11 @@ final class Kernel
     private $authenticator;
 
     /**
+     * @var IpAllowlist
+     */
+    private $allowlist;
+
+    /**
      * @var RequestDirectories
      */
     private $directories;
@@ -81,6 +90,7 @@ final class Kernel
         TrustedProxies $proxies,
         bool $httpsRequired,
         ApiKeyAuthenticator $authenticator,
+        IpAllowlist $allowlist,
         RequestDirectories $directories,
         ResponseFactory $responses,
         LoggerInterface $logger
@@ -89,6 +99,7 @@ final class Kernel
         $this->proxies = $proxies;
         $this->httpsRequired = $httpsRequired;
         $this->authenticator = $authenticator;
+        $this->allowlist = $allowlist;
         $this->directories = $directories;
         $this->responses = $responses;
         $this->logger = $logger;
@@ -135,13 +146,18 @@ final class Kernel
             return $this->responses->httpsRequired();
         }
 
+        if (!$this->authenticator->isConfigured()) {
+            $this->logger->critical('No API key is configured (API_KEY, API_KEYS): every protected request is refused');
+
+            return $this->responses->authenticationNotConfigured();
+        }
+        if (!$this->allowlist->allows($this->proxies->getClientAddress($request))) {
+            return $this->responses->ipNotAllowed();
+        }
+
         switch ($this->authenticator->authenticate($request)) {
             case ApiKeyAuthenticator::AUTHENTICATED:
                 return null;
-            case ApiKeyAuthenticator::NOT_CONFIGURED:
-                $this->logger->critical('No API key is configured (API_KEY, API_KEYS): every protected request is refused');
-
-                return $this->responses->authenticationNotConfigured();
             case ApiKeyAuthenticator::MISSING_KEY:
                 return $this->responses->missingApiKey();
             default:

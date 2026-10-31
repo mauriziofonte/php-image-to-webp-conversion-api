@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Tests\Functional\Auth;
 
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
+use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
@@ -20,13 +21,16 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 /**
  * Authentication as the kernel built by KernelFactory applies it: every
  * protected path needs an accepted key, /healthz needs none, keys rotate,
- * and without a configured key the service refuses everything protected
- * with 503 (findings C-1 and C-4).
+ * without a configured key the service refuses everything protected with
+ * 503 (findings C-1 and C-4), and the optional IP allowlist judges the
+ * client address that TRUSTED_PROXIES vouch for.
  *
  * @covers \Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator
+ * @covers \Mfonte\ImageConversionApi\Auth\IpAllowlist
  * @covers \Mfonte\ImageConversionApi\Http\Kernel
  */
 #[CoversClass(ApiKeyAuthenticator::class)]
+#[CoversClass(IpAllowlist::class)]
 #[CoversClass(Kernel::class)]
 final class AuthenticationTest extends TestCase
 {
@@ -179,6 +183,52 @@ final class AuthenticationTest extends TestCase
             self::assertSame('{"status":"ok"}', $response->getContent());
             self::assertNull($response->headers->get('WWW-Authenticate'));
         }
+    }
+
+    /**
+     * @return array<string, array{array<string, string>, int}>
+     */
+    public static function provideClients(): array
+    {
+        $key = ['HTTP_X_API_KEY' => self::KEY];
+
+        return [
+            'allowed client' => [$key + ['REMOTE_ADDR' => '198.51.100.7'], 501],
+            'allowed IPv6 client' => [$key + ['REMOTE_ADDR' => '2001:db8::7'], 501],
+            'other client' => [$key + ['REMOTE_ADDR' => '203.0.113.9'], 403],
+            'other client, without a key' => [['REMOTE_ADDR' => '203.0.113.9'], 403],
+            'allowed client, without a key' => [['REMOTE_ADDR' => '198.51.100.7'], 401],
+            'other client claims an allowed address' => [$key + ['REMOTE_ADDR' => '203.0.113.9', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], 403],
+            'allowed client behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], 501],
+            'other client behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '203.0.113.9'], 403],
+            'other client spoofs behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 203.0.113.9'], 403],
+            'the trusted proxy itself' => [$key + ['REMOTE_ADDR' => '10.0.0.5'], 403],
+        ];
+    }
+
+    /**
+     * @dataProvider provideClients
+     *
+     * @param array<string, string> $server
+     */
+    #[DataProvider('provideClients')]
+    public function testTheAllowlistJudgesTheClientAddress(array $server, int $status): void
+    {
+        $config = ['IP_ALLOWLIST' => '198.51.100.7, 2001:db8::/32', 'TRUSTED_PROXIES' => '10.0.0.5'];
+
+        $response = $this->handle('POST', '/v2/convert', $server, $config);
+
+        self::assertSame($status, $response->getStatusCode());
+        if ($status === 403) {
+            self::assertSame(ResponseFactory::ERROR_IP_NOT_ALLOWED, self::errorCode($response));
+        }
+    }
+
+    public function testTheAllowlistDoesNotApplyToHealthz(): void
+    {
+        $response = $this->handle('GET', '/healthz', ['REMOTE_ADDR' => '203.0.113.9'], ['IP_ALLOWLIST' => '198.51.100.7']);
+
+        self::assertSame(200, $response->getStatusCode());
     }
 
     public function testErrorsDoNotEchoTheKey(): void

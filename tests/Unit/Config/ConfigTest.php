@@ -49,6 +49,7 @@ final class ConfigTest extends TestCase
         self::assertSame([], $config->getTrustedProxies());
         self::assertTrue($config->isHttpsRequired());
         self::assertSame([], $config->getApiKeys());
+        self::assertSame([], $config->getIpAllowlist());
     }
 
     /**
@@ -78,6 +79,7 @@ final class ConfigTest extends TestCase
         self::assertSame([], $config->getTrustedProxies());
         self::assertTrue($config->isHttpsRequired());
         self::assertSame([], $config->getApiKeys());
+        self::assertSame([], $config->getIpAllowlist());
     }
 
     public function testReadsTheValues(): void
@@ -87,12 +89,14 @@ final class ConfigTest extends TestCase
             'TEMP_DIR' => $this->directory->path('var/tmp'),
             'TRUSTED_PROXIES' => '10.0.0.0/8, 192.0.2.1,2001:db8::/32',
             'REQUIRE_HTTPS' => 'false',
+            'IP_ALLOWLIST' => '198.51.100.0/24,::1',
         ], [$this->directory->path('public')]);
 
         self::assertSame('convert-now', $config->getV1ScriptName());
         self::assertSame($this->directory->path('var/tmp'), $config->getTemporaryDirectory());
         self::assertSame(['10.0.0.0/8', '192.0.2.1/32', '2001:db8::/32'], array_map('strval', $config->getTrustedProxies()));
         self::assertFalse($config->isHttpsRequired());
+        self::assertSame(['198.51.100.0/24', '::1/128'], array_map('strval', $config->getIpAllowlist()));
     }
 
     /**
@@ -143,6 +147,14 @@ final class ConfigTest extends TestCase
         $this->expectExceptionMessage('REQUIRE_HTTPS must be true or false');
 
         Config::fromArray(['REQUIRE_HTTPS' => 'sometimes']);
+    }
+
+    public function testRefusesAnInvalidAllowlistEntry(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('IP_ALLOWLIST must list IP addresses and CIDR blocks separated by commas: "10.0.0.0/40" has');
+
+        Config::fromArray(['IP_ALLOWLIST' => '10.0.0.0/40']);
     }
 
     public function testRefusesAnInvalidTrustedProxy(): void
@@ -226,10 +238,10 @@ final class ConfigTest extends TestCase
     public function testListsEveryError(): void
     {
         try {
-            Config::fromArray(['V1_SCRIPT_NAME' => 'a/b', 'TEMP_DIR' => 'relative', 'TRUSTED_PROXIES' => 'x', 'REQUIRE_HTTPS' => 'x']);
+            Config::fromArray(['V1_SCRIPT_NAME' => 'a/b', 'TEMP_DIR' => 'relative', 'TRUSTED_PROXIES' => 'x', 'REQUIRE_HTTPS' => 'x', 'IP_ALLOWLIST' => 'x']);
             self::fail('An InvalidConfigurationException was expected');
         } catch (InvalidConfigurationException $exception) {
-            self::assertCount(4, $exception->getErrors());
+            self::assertCount(5, $exception->getErrors());
             self::assertStringStartsWith('Invalid configuration: V1_SCRIPT_NAME', $exception->getMessage());
         }
     }

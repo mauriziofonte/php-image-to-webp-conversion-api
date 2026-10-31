@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Http;
 
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
+use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
@@ -43,6 +44,7 @@ final class KernelFactory
             new TrustedProxies($config->getTrustedProxies()),
             $config->isHttpsRequired(),
             new ApiKeyAuthenticator($config->getApiKeys()),
+            new IpAllowlist($config->getIpAllowlist()),
             new RequestDirectories($config->getTemporaryDirectory()),
             $responses,
             $logger
