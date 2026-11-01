@@ -2,6 +2,24 @@
 
 A simple PHP microservice that converts input images (JPEG, PNG, or any other image format) to **WEBP** using a JSON API with custom conversion options.
 
+## 2.0 endpoint: `POST /v2/convert`
+
+> 2.0 is in development; the rest of this README still describes 1.x and is rewritten before the release.
+
+`POST /v2/convert` converts one image and answers the image itself, not JSON.
+
+- **Authentication**: `Authorization: Bearer <key>` (or the 1.x `X-API-Key` header), over HTTPS.
+- **Body**: the image as the raw body (any `Content-Type` but a form, e.g. `image/png` or `application/octet-stream`), or `multipart/form-data` with the image as the one file of the field `image`.
+- **Parameters**, in the query string (or as form fields of a multipart body), parsed strictly: an unknown name or a malformed value is a `400`. `format` (`webp`, `avif`, `original`; default `webp`), `quality` (1-100), `effort` (0-9, default 4), `lossless`, `width` and `height` (1-16383), `fit` (`contain`, `cover`, `fill`), `enlarge`, `strip`, `keep_icc` and `animation` (`preserve`, `first_frame`, `reject`). Booleans are `1`/`0` or `true`/`false`.
+- **Success**: `200`, the image as the body, its exact `Content-Type` (`image/webp`, `image/avif`, or the input's type when the original is kept) and `Content-Length`, and these headers: `X-Conversion-Format`, `X-Conversion-Requested-Format`, `X-Conversion-Fallback` (`1` when the requested format could not be produced) with `X-Conversion-Fallback-Reason`, `X-Conversion-Original-Kept` (`1` when the converted file was not smaller and the input is returned unchanged), `X-Conversion-Width`, `X-Conversion-Height`, `X-Conversion-Frames`, `X-Conversion-Input-Bytes`, `X-Conversion-Backend`, `X-Conversion-Isolation`, `X-Conversion-Duration-Ms`, `X-Conversion-Warnings` (a count) and one `X-Conversion-Warning` line per warning.
+- **Errors**: `{"error": {"code": "...", "message": "..."}}` with a status that follows the code: `400` (`invalid_request`, `missing_image`), `401`, `413` (`file_too_large`), `415` (`unsupported_format`, `unsupported_media_type`), `422` (`invalid_image`, `animation_rejected`, `image_too_large`, `conversion_timeout`, `resource_limit`), `500` (`conversion_failed`, `output_verification_failed`, `internal_error`), `503` (`isolation_unavailable`, `concurrency_limit` with `Retry-After`).
+
+```bash
+curl --fail -H "Authorization: Bearer $API_KEY" -H 'Content-Type: image/png' \
+  --data-binary @photo.png -o photo.webp -D - \
+  'https://example.com/v2/convert?format=webp&width=1200'
+```
+
 ## Why Use This Microservice?
 
 Converting images to WEBP format often requires the `exec()` function to call the `cwebp` binary on a Linux machine. However, `exec()` is not always permitted on all hosting services (e.g., shared hosting), and it's a common practice to disable it on production websites for security reasons.

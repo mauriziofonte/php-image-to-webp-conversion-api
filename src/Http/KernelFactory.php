@@ -7,9 +7,17 @@ namespace Mfonte\ImageConversionApi\Http;
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Mfonte\ImageConversionApi\Config\Config;
+use Mfonte\ImageConversionApi\Conversion\ConverterFactoryInterface;
+use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
 use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
 use Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler;
+use Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler;
+use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
+use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
+use Mfonte\SecureImageConverter\Backend\BackendOptions;
+use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
+use Mfonte\SecureImageConverter\Validation\Limits;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -23,11 +31,14 @@ use Psr\Log\LoggerInterface;
  * | Path                    | Methods   | Access    | Handler                         |
  * | ----------------------- | --------- | --------- | ------------------------------- |
  * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | 501 until API-5                 |
- * | /v2/convert             | POST      | protected | 501 until API-4                 |
+ * | /v2/convert             | POST      | protected | V2ConvertHandler                |
  * | /healthz                | GET, HEAD | public    | HealthHandler                   |
  * | /metrics                | GET, HEAD | protected | MetricsHandler                  |
  *
- * The /v1 route exists only when V1_SCRIPT_NAME is set.
+ * The /v1 route exists only when V1_SCRIPT_NAME is set. The conversion
+ * endpoints convert with the library (LibraryConverterFactory, with the
+ * library's default limits, backends and isolation policy) unless another
+ * ConverterFactoryInterface is given.
  */
 final class KernelFactory
 {
@@ -35,12 +46,22 @@ final class KernelFactory
     {
     }
 
-    public static function create(Config $config, LoggerInterface $logger): Kernel
+    /**
+     * @param ConverterFactoryInterface|null $converters creates the converters of the conversion endpoints; the
+     *                                                   library's when null
+     */
+    public static function create(Config $config, LoggerInterface $logger, ?ConverterFactoryInterface $converters = null): Kernel
     {
         $responses = new ResponseFactory();
+        if ($converters === null) {
+            $converters = new LibraryConverterFactory(
+                (new SecureConverterBuilder())->withBackendOptions((new BackendOptions())->withLogger($logger)),
+                new Limits()
+            );
+        }
 
         return new Kernel(
-            new Router(self::routes($config, $responses)),
+            new Router(self::routes($config, $responses, $converters, $logger)),
             new TrustedProxies($config->getTrustedProxies()),
             $config->isHttpsRequired(),
             new ApiKeyAuthenticator($config->getApiKeys()),
@@ -54,11 +75,20 @@ final class KernelFactory
     /**
      * @return list<Route>
      */
-    private static function routes(Config $config, ResponseFactory $responses): array
+    private static function routes(Config $config, ResponseFactory $responses, ConverterFactoryInterface $converters, LoggerInterface $logger): array
     {
         $notImplemented = new NotImplementedHandler($responses);
+        $v2 = new V2ConvertHandler(
+            $converters,
+            new InputReader(),
+            new V2RequestMapper(),
+            new ErrorMapper(),
+            $responses,
+            $logger,
+            $config->getConversionTimeLimit()
+        );
         $routes = [
-            new Route('v2_convert', '/v2/convert', ['POST'], $notImplemented),
+            new Route('v2_convert', '/v2/convert', ['POST'], $v2),
             new Route('healthz', '/healthz', ['GET', 'HEAD'], new HealthHandler($responses), true),
             new Route('metrics', '/metrics', ['GET', 'HEAD'], new MetricsHandler($responses)),
         ];

@@ -12,7 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Placeholder of the conversion endpoints until they are implemented
- * (POST /v2/convert in API-4, POST /v1/{V1_SCRIPT_NAME} in API-5): answers
+ * (POST /v1/{V1_SCRIPT_NAME} until API-5): answers
  * 501 with the error code "not_implemented", after the same checks as the
  * finished endpoint (HTTPS, method, credentials).
  */

@@ -62,7 +62,7 @@ final class FrontControllerTest extends TestCase
         self::assertSame('application/json', $health['headers']['content-type'] ?? null);
 
         self::assertSame(501, $server->request('POST', '/v1/convert-now', $https)['status']);
-        self::assertSame(501, $server->request('POST', '/v2/convert', $https)['status']);
+        self::assertSame(400, $server->request('POST', '/v2/convert', $https)['status']);
         self::assertSame(404, $server->request('GET', '/missing', $https)['status']);
         self::assertDoesNotMatchRegularExpression('/PHP (?:Fatal|Parse|Warning|Notice|Deprecated)/', $server->getOutput());
     }
@@ -77,7 +77,7 @@ final class FrontControllerTest extends TestCase
         ]);
         $https = ['X-Forwarded-Proto' => 'https'];
 
-        self::assertSame(501, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer third-key-0123456789'])['status'], $server->getOutput());
+        self::assertSame(400, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer third-key-0123456789'])['status'], $server->getOutput());
         self::assertSame(401, $server->request('POST', '/v2/convert', $https + ['Authorization' => 'Bearer fourth-key-0123456789'])['status']);
         self::assertSame(200, $server->request('GET', '/metrics', $https + ['X-API-Key' => 'first-key-0123456789'])['status']);
     }

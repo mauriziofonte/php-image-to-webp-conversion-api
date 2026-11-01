@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Http;
 
+use Mfonte\ImageConversionApi\Exception\RequestException;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -56,6 +57,15 @@ final class ResponseFactory
     /** 403: IP_ALLOWLIST is set and the client address is not in it. */
     public const ERROR_IP_NOT_ALLOWED = 'ip_not_allowed';
 
+    /** 400: a conversion request carries no image, or its upload did not complete. */
+    public const ERROR_MISSING_IMAGE = 'missing_image';
+
+    /**
+     * 415: the body of a conversion request is neither an image nor multipart/form-data (an
+     * application/x-www-form-urlencoded form, for instance).
+     */
+    public const ERROR_UNSUPPORTED_MEDIA_TYPE = 'unsupported_media_type';
+
     /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */
@@ -90,6 +100,14 @@ final class ResponseFactory
     public function error(int $status, string $code, string $message, array $headers = []): Response
     {
         return $this->json(['error' => ['code' => $code, 'message' => $message]], $status, $headers);
+    }
+
+    /**
+     * The error a RequestException describes, with its headers.
+     */
+    public function fromException(RequestException $exception): Response
+    {
+        return $this->error($exception->getStatusCode(), $exception->getErrorCode(), $exception->getMessage(), $exception->getHeaders());
     }
 
     public function notFound(): Response

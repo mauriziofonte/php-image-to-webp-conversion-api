@@ -33,6 +33,16 @@ final class HttpsEnforcementTest extends TestCase
     private const API_KEY = 'https-test-key-0123456789';
 
     /**
+     * The answer of /v2/convert to a request that reached it without an image.
+     */
+    private const REACHED = 'missing_image';
+
+    /**
+     * The answer to a request refused for plain HTTP.
+     */
+    private const REFUSED = 'https_required';
+
+    /**
      * @var TemporaryDirectory
      */
     private $directory;
@@ -82,28 +92,28 @@ final class HttpsEnforcementTest extends TestCase
 
     public function testHttpsIsAccepted(): void
     {
-        self::assertSame(501, $this->handle('POST', 'https://api.example.test/v2/convert')->getStatusCode());
+        self::assertSame(self::REACHED, self::errorCode($this->handle('POST', 'https://api.example.test/v2/convert')));
     }
 
     public function testRequireHttpsCanBeTurnedOff(): void
     {
         $response = $this->handle('POST', 'http://api.example.test/v2/convert', [], ['REQUIRE_HTTPS' => 'false']);
 
-        self::assertSame(501, $response->getStatusCode());
+        self::assertSame(self::REACHED, self::errorCode($response));
     }
 
     /**
-     * @return array<string, array{string, string, int}>
+     * @return array<string, array{string, string, string}>
      */
     public static function provideForwardedRequests(): array
     {
         return [
-            'trusted load balancer, https' => [self::LOAD_BALANCER, 'https', 501],
-            'trusted load balancer, http' => [self::LOAD_BALANCER, 'http', 400],
-            'trusted load balancer, http appended' => [self::LOAD_BALANCER, 'https, http', 400],
-            'untrusted peer, https' => ['192.0.2.1', 'https', 400],
-            'trusted proxy in a CIDR block' => ['10.255.0.1', 'https', 501],
-            'trusted IPv6 proxy' => ['2001:db8::10', 'https', 501],
+            'trusted load balancer, https' => [self::LOAD_BALANCER, 'https', self::REACHED],
+            'trusted load balancer, http' => [self::LOAD_BALANCER, 'http', self::REFUSED],
+            'trusted load balancer, http appended' => [self::LOAD_BALANCER, 'https, http', self::REFUSED],
+            'untrusted peer, https' => ['192.0.2.1', 'https', self::REFUSED],
+            'trusted proxy in a CIDR block' => ['10.255.0.1', 'https', self::REACHED],
+            'trusted IPv6 proxy' => ['2001:db8::10', 'https', self::REACHED],
         ];
     }
 
@@ -111,7 +121,7 @@ final class HttpsEnforcementTest extends TestCase
      * @dataProvider provideForwardedRequests
      */
     #[DataProvider('provideForwardedRequests')]
-    public function testXForwardedProtoCountsOnlyFromTrustedProxies(string $peer, string $protocol, int $status): void
+    public function testXForwardedProtoCountsOnlyFromTrustedProxies(string $peer, string $protocol, string $code): void
     {
         $response = $this->handle(
             'POST',
@@ -120,7 +130,7 @@ final class HttpsEnforcementTest extends TestCase
             ['TRUSTED_PROXIES' => '10.0.0.0/8,2001:db8::/32']
         );
 
-        self::assertSame($status, $response->getStatusCode());
+        self::assertSame($code, self::errorCode($response));
     }
 
     public function testNoProxyIsTrustedByDefault(): void
@@ -143,5 +153,15 @@ final class HttpsEnforcementTest extends TestCase
 
         return KernelFactory::create(Config::fromArray($values), new NullLogger())
             ->handle(Request::create($uri, $method, [], [], [], $server));
+    }
+
+    private static function errorCode(Response $response): string
+    {
+        $data = json_decode((string) $response->getContent(), true);
+        self::assertIsArray($data);
+        self::assertIsArray($data['error'] ?? null);
+        self::assertIsString($data['error']['code'] ?? null);
+
+        return $data['error']['code'];
     }
 }

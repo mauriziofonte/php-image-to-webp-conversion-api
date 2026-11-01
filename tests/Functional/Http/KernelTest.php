@@ -105,12 +105,12 @@ final class KernelTest extends TestCase
         self::assertStringContainsString("# TYPE image_conversion_api_up gauge\nimage_conversion_api_up 1\n", (string) $response->getContent());
     }
 
-    public function testV2ConvertIsNotImplementedYet(): void
+    public function testV2ConvertNeedsAnImage(): void
     {
         $response = $this->handle('POST', '/v2/convert');
 
-        self::assertSame(501, $response->getStatusCode());
-        self::assertSame(ResponseFactory::ERROR_NOT_IMPLEMENTED, self::errorCode($response));
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(ResponseFactory::ERROR_MISSING_IMAGE, self::errorCode($response));
     }
 
     public function testV1IsServedAtItsScriptName(): void
@@ -198,18 +198,24 @@ final class KernelTest extends TestCase
         $malformed = $this->handle('POST', '/v2/convert', [], ['HTTP_X_HTTP_METHOD_OVERRIDE' => 'NOT A METHOD']);
 
         self::assertSame(405, $overridden->getStatusCode());
-        self::assertSame(501, $malformed->getStatusCode());
+        self::assertSame(ResponseFactory::ERROR_MISSING_IMAGE, self::errorCode($malformed));
     }
 
     public function testRoutesThatWriteNoFileTouchNoDisk(): void
     {
         $this->handle('GET', '/healthz');
         $this->handle('GET', '/metrics');
-        $this->handle('POST', '/v2/convert');
         $this->handle('GET', '/missing');
 
         self::assertSame([], $this->directory->entries());
         self::assertSame([], $this->logger->getRecords());
+    }
+
+    public function testARefusedConversionLeavesNoFile(): void
+    {
+        $this->handle('POST', '/v2/convert');
+
+        self::assertSame([], $this->directory->entries());
     }
 
     /**

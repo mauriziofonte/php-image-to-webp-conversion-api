@@ -67,7 +67,7 @@ final class AuthenticationTest extends TestCase
     public static function provideProtectedPaths(): array
     {
         return [
-            'v2' => ['POST', '/v2/convert', 501],
+            'v2' => ['POST', '/v2/convert', 400],
             'v1' => ['POST', '/v1/convert-now', 501],
             'metrics' => ['GET', '/metrics', 200],
             'unknown path' => ['GET', '/missing', 404],
@@ -115,7 +115,7 @@ final class AuthenticationTest extends TestCase
     #[DataProvider('provideHeaderShapes')]
     public function testEveryHeaderShapeReachesTheEndpoint(array $server): void
     {
-        self::assertSame(501, $this->handle('POST', '/v2/convert', $server)->getStatusCode());
+        self::assertSame(400, $this->handle('POST', '/v2/convert', $server)->getStatusCode());
     }
 
     public function testKeysRotate(): void
@@ -123,10 +123,10 @@ final class AuthenticationTest extends TestCase
         $both = ['API_KEY' => self::KEY, 'API_KEYS' => self::NEXT_KEY];
         $afterRotation = ['API_KEY' => null, 'API_KEYS' => self::NEXT_KEY];
 
-        self::assertSame(501, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::KEY], $both)->getStatusCode());
-        self::assertSame(501, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::NEXT_KEY], $both)->getStatusCode());
+        self::assertSame(400, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::KEY], $both)->getStatusCode());
+        self::assertSame(400, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::NEXT_KEY], $both)->getStatusCode());
         self::assertSame(401, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::KEY], $afterRotation)->getStatusCode());
-        self::assertSame(501, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::NEXT_KEY], $afterRotation)->getStatusCode());
+        self::assertSame(400, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::NEXT_KEY], $afterRotation)->getStatusCode());
     }
 
     /**
@@ -193,13 +193,13 @@ final class AuthenticationTest extends TestCase
         $key = ['HTTP_X_API_KEY' => self::KEY];
 
         return [
-            'allowed client' => [$key + ['REMOTE_ADDR' => '198.51.100.7'], 501],
-            'allowed IPv6 client' => [$key + ['REMOTE_ADDR' => '2001:db8::7'], 501],
+            'allowed client' => [$key + ['REMOTE_ADDR' => '198.51.100.7'], 400],
+            'allowed IPv6 client' => [$key + ['REMOTE_ADDR' => '2001:db8::7'], 400],
             'other client' => [$key + ['REMOTE_ADDR' => '203.0.113.9'], 403],
             'other client, without a key' => [['REMOTE_ADDR' => '203.0.113.9'], 403],
             'allowed client, without a key' => [['REMOTE_ADDR' => '198.51.100.7'], 401],
             'other client claims an allowed address' => [$key + ['REMOTE_ADDR' => '203.0.113.9', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], 403],
-            'allowed client behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], 501],
+            'allowed client behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], 400],
             'other client behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '203.0.113.9'], 403],
             'other client spoofs behind the trusted proxy' => [$key + ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 203.0.113.9'], 403],
             'the trusted proxy itself' => [$key + ['REMOTE_ADDR' => '10.0.0.5'], 403],
