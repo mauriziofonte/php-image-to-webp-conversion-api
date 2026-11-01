@@ -103,37 +103,63 @@ final class BuiltinServer
      */
     public function request(string $method, string $target, array $headers = [], string $body = ''): array
     {
-        $socket = @stream_socket_client('tcp://127.0.0.1:' . $this->port, $errno, $errstr, 5.0);
-        if (!is_resource($socket)) {
-            throw new \RuntimeException(sprintf('Cannot connect to 127.0.0.1:%d: %s', $this->port, $errstr));
-        }
-        stream_set_timeout($socket, 30);
-
-        $headers += ['Host' => '127.0.0.1:' . $this->port];
-        $headers['Content-Length'] = (string) strlen($body);
-        $headers['Connection'] = 'close';
-        $request = $method . ' ' . $target . " HTTP/1.1\r\n";
-        foreach ($headers as $name => $value) {
-            $request .= $name . ': ' . $value . "\r\n";
-        }
-        fwrite($socket, $request . "\r\n" . $body);
+        $socket = $this->send($method, $target, $headers, $body);
         $raw = (string) stream_get_contents($socket);
         fclose($socket);
 
-        $parts = explode("\r\n\r\n", $raw, 2);
-        $lines = explode("\r\n", $parts[0]);
-        if (preg_match('#\AHTTP/\d\.\d (\d{3})#', $lines[0], $match) !== 1) {
-            throw new \RuntimeException('No status line in the response: ' . $raw . "\n" . $this->getOutput());
+        return $this->parse($raw);
+    }
+
+    /**
+     * Sends several requests at once, each on its own connection, then
+     * reads every response, so that a server with several workers handles
+     * them concurrently.
+     *
+     * @param list<array{0: string, 1: string, 2: array<string, string>, 3: string}> $requests method, target,
+     *                                                                                         headers and body of each
+     *
+     * @throws \RuntimeException when the server cannot be reached or answers with no status line
+     *
+     * @return list<array{status: int, headers: array<string, string>, body: string}> in the order of $requests
+     */
+    public function requestAll(array $requests): array
+    {
+        $sockets = [];
+        foreach ($requests as $index => $request) {
+            $sockets[$index] = $this->send($request[0], $request[1], $request[2], $request[3]);
         }
-        $responseHeaders = [];
-        foreach (array_slice($lines, 1) as $line) {
-            $colon = strpos($line, ':');
-            if ($colon !== false) {
-                $responseHeaders[strtolower(substr($line, 0, $colon))] = trim(substr($line, $colon + 1));
+        $raw = array_fill_keys(array_keys($sockets), '');
+        $open = $sockets;
+        $deadline = microtime(true) + 60.0;
+        while ($open !== [] && microtime(true) < $deadline) {
+            $read = array_values($open);
+            $write = null;
+            $except = null;
+            if (stream_select($read, $write, $except, 1) === false) {
+                break;
+            }
+            foreach ($read as $socket) {
+                $index = array_search($socket, $open, true);
+                // fread() returns false on error before PHP 8: an empty string, as at the end.
+                $chunk = (string) fread($socket, 65536);
+                if ($chunk === '' && feof($socket)) {
+                    fclose($socket);
+                    unset($open[$index]);
+                    continue;
+                }
+                $raw[$index] .= $chunk;
             }
         }
+        foreach ($open as $socket) {
+            fclose($socket);
+        }
 
-        return ['status' => (int) $match[1], 'headers' => $responseHeaders, 'body' => $parts[1] ?? ''];
+        $responses = [];
+        foreach ($raw as $response) {
+            $responses[] = $this->parse($response);
+        }
+
+        return $responses;
     }
 
     /**
@@ -156,6 +182,65 @@ final class BuiltinServer
         $this->stopped = true;
         proc_terminate($this->process);
         proc_close($this->process);
+    }
+
+    /**
+     * Connects and writes one request; the caller reads the response.
+     *
+     * @param array<string, string> $headers
+     *
+     * @throws \RuntimeException when the server cannot be reached
+     *
+     * @return resource
+     */
+    private function send(string $method, string $target, array $headers, string $body)
+    {
+        $socket = @stream_socket_client('tcp://127.0.0.1:' . $this->port, $errno, $errstr, 5.0);
+        if (!is_resource($socket)) {
+            throw new \RuntimeException(sprintf('Cannot connect to 127.0.0.1:%d: %s', $this->port, $errstr));
+        }
+        stream_set_timeout($socket, 30);
+
+        $headers += ['Host' => '127.0.0.1:' . $this->port];
+        $headers['Content-Length'] = (string) strlen($body);
+        $headers['Connection'] = 'close';
+        $request = $method . ' ' . $target . " HTTP/1.1\r\n";
+        foreach ($headers as $name => $value) {
+            $request .= $name . ': ' . $value . "\r\n";
+        }
+        $request .= "\r\n" . $body;
+        for ($written = 0; $written < strlen($request);) {
+            $count = fwrite($socket, substr($request, $written, 1048576));
+            if ($count === false || $count === 0) {
+                break;
+            }
+            $written += $count;
+        }
+
+        return $socket;
+    }
+
+    /**
+     * @throws \RuntimeException when the response has no status line
+     *
+     * @return array{status: int, headers: array<string, string>, body: string} header names in lower case
+     */
+    private function parse(string $raw): array
+    {
+        $parts = explode("\r\n\r\n", $raw, 2);
+        $lines = explode("\r\n", $parts[0]);
+        if (preg_match('#\AHTTP/\d\.\d (\d{3})#', $lines[0], $match) !== 1) {
+            throw new \RuntimeException('No status line in the response: ' . $raw . "\n" . $this->getOutput());
+        }
+        $responseHeaders = [];
+        foreach (array_slice($lines, 1) as $line) {
+            $colon = strpos($line, ':');
+            if ($colon !== false) {
+                $responseHeaders[strtolower(substr($line, 0, $colon))] = trim(substr($line, $colon + 1));
+            }
+        }
+
+        return ['status' => (int) $match[1], 'headers' => $responseHeaders, 'body' => $parts[1] ?? ''];
     }
 
     private function waitUntilReady(): bool
