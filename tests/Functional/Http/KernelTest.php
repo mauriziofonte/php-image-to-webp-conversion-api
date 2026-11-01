@@ -10,6 +10,7 @@ use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
 use Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
+use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Log\MemoryLogger;
@@ -209,6 +210,22 @@ final class KernelTest extends TestCase
 
         self::assertSame([], $this->directory->entries());
         self::assertSame([], $this->logger->getRecords());
+    }
+
+    /**
+     * What a killed worker left (a request directory with a working
+     * directory of the library in it) goes with the next request that
+     * creates a directory.
+     */
+    public function testTheNextConversionRemovesWhatADeadWorkerLeft(): void
+    {
+        $left = $this->directory->path(RequestDirectories::PREFIX . 'killed');
+        mkdir($left . '/sic-0123456789abcdef', 0700, true);
+        touch($left, time() - KernelFactory::MIN_STALE_SECONDS - 60);
+
+        $this->handle('POST', '/v2/convert', [], ['CONTENT_TYPE' => 'image/png']);
+
+        self::assertSame([], $this->directory->entries());
     }
 
     public function testARefusedConversionLeavesNoFile(): void

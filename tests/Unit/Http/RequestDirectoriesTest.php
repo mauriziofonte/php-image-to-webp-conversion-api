@@ -188,4 +188,55 @@ final class RequestDirectoriesTest extends TestCase
         self::assertSame([], $this->directory->entries());
         self::assertSame([], $directories->getTracked());
     }
+
+    public function testTheFirstCreationRemovesStaleDirectories(): void
+    {
+        $stale = $this->directory->path(RequestDirectories::PREFIX . 'stale');
+        mkdir($stale . '/sic-0123', 0700, true);
+        file_put_contents($stale . '/sic-0123/source', 'left by a killed worker');
+        touch($stale, time() - 7200);
+        $fresh = $this->directory->path(RequestDirectories::PREFIX . 'fresh');
+        mkdir($fresh);
+        touch($fresh, time() - 60);
+        $other = $this->directory->path('other-application');
+        mkdir($other);
+        touch($other, time() - 7200);
+        $target = $this->directory->path('target');
+        mkdir($target);
+        $link = $this->directory->path(RequestDirectories::PREFIX . 'link');
+        symlink($target, $link);
+        $directories = new RequestDirectories($this->directory->path(), 3600);
+
+        $created = $directories->create();
+        touch($fresh, time() - 7200);
+        $directories->create();
+
+        self::assertDirectoryDoesNotExist($stale);
+        self::assertDirectoryExists($fresh, 'only the first creation sweeps');
+        self::assertDirectoryExists($other);
+        self::assertTrue(is_link($link));
+        self::assertDirectoryExists($target);
+        self::assertDirectoryExists($created);
+    }
+
+    public function testNeverRemovesATrackedDirectory(): void
+    {
+        $directories = new RequestDirectories($this->directory->path());
+        $created = $directories->create();
+        touch($created, time() - 7200);
+
+        self::assertSame([], $directories->removeStale(3600));
+        self::assertDirectoryExists($created);
+    }
+
+    public function testDoesNotSweepWithoutAnAge(): void
+    {
+        $stale = $this->directory->path(RequestDirectories::PREFIX . 'stale');
+        mkdir($stale);
+        touch($stale, time() - 86400 * 30);
+
+        (new RequestDirectories($this->directory->path()))->create();
+
+        self::assertDirectoryExists($stale);
+    }
 }

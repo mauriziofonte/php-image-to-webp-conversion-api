@@ -42,6 +42,12 @@ use Psr\Log\LoggerInterface;
  */
 final class KernelFactory
 {
+    /**
+     * Shortest age, in seconds, after which a request directory left by a
+     * dead process is removed.
+     */
+    public const MIN_STALE_SECONDS = 3600;
+
     private function __construct()
     {
     }
@@ -66,10 +72,20 @@ final class KernelFactory
             $config->isHttpsRequired(),
             new ApiKeyAuthenticator($config->getApiKeys()),
             new IpAllowlist($config->getIpAllowlist()),
-            new RequestDirectories($config->getTemporaryDirectory()),
+            new RequestDirectories($config->getTemporaryDirectory(), self::staleAfterSeconds($config)),
             $responses,
             $logger
         );
+    }
+
+    /**
+     * The age after which a request directory is left over by a dead
+     * process: twice CONVERSION_TIME_LIMIT, and at least an hour, well past
+     * the end of any request.
+     */
+    private static function staleAfterSeconds(Config $config): int
+    {
+        return max(self::MIN_STALE_SECONDS, 2 * $config->getConversionTimeLimit());
     }
 
     /**

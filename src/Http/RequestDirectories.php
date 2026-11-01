@@ -23,10 +23,14 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  * signal (SIGKILL, or SIGTERM without a handler) runs no shutdown function,
  * and neither do some PHP builds after memory exhaustion (the builds of PHP
  * 7.2 to 8.1 that setup-php installs on GitHub's Ubuntu runners exit with
- * status 1 there). Their directories stay until something else removes them,
- * such as systemd-tmpfiles or tmpreaper for the system temporary directory.
- * Every directory is named with PREFIX, so that such a cleaner can be scoped
- * to them.
+ * status 1 there). Every directory is named with PREFIX, and the private
+ * working directories of the conversion library are created inside the
+ * request directory (LibraryConverterFactory), so that one rule covers
+ * everything such a process leaves: when built with $staleAfterSeconds, the
+ * first create() of each instance removes the directories with PREFIX in
+ * the parent that nobody has changed for that long (no request can still
+ * own one: a request ends within CONVERSION_TIME_LIMIT), and a cleaner such
+ * as systemd-tmpfiles can be scoped to PREFIX as well.
  *
  * Removal never follows symbolic links, never raises a PHP warning (it may
  * run at shutdown, after the owner of a directory already removed it, under
@@ -63,15 +67,29 @@ final class RequestDirectories
     private $shutdownRegistered = false;
 
     /**
-     * @param string $parent directory that receives the request directories; created (mode 0700) on first use
-     *                       when it does not exist
+     * @var int|null
      */
-    public function __construct(string $parent)
+    private $staleAfterSeconds;
+
+    /**
+     * @var bool
+     */
+    private $swept = false;
+
+    /**
+     * @param string   $parent            directory that receives the request directories; created (mode 0700) on
+     *                                    first use when it does not exist
+     * @param int|null $staleAfterSeconds age, in seconds since its last change, after which a directory with PREFIX
+     *                                    in the parent is left over by a dead process and removed by the first
+     *                                    create(); null never removes one. It must be longer than any request
+     */
+    public function __construct(string $parent, ?int $staleAfterSeconds = null)
     {
         $this->parent = rtrim($parent, '/\\');
         if ($this->parent === '') {
             $this->parent = DIRECTORY_SEPARATOR;
         }
+        $this->staleAfterSeconds = $staleAfterSeconds;
     }
 
     public function getParent(): string
@@ -99,6 +117,10 @@ final class RequestDirectories
     {
         if (!is_dir($this->parent) && !@mkdir($this->parent, 0700, true) && !is_dir($this->parent)) {
             throw new RuntimeException(sprintf('Cannot create the temporary directory %s', $this->parent));
+        }
+        if ($this->staleAfterSeconds !== null && !$this->swept) {
+            $this->swept = true;
+            $this->removeStale($this->staleAfterSeconds);
         }
 
         for ($attempt = 0; $attempt < self::ATTEMPTS; ++$attempt) {
@@ -149,6 +171,36 @@ final class RequestDirectories
         }
 
         return $this->getTracked();
+    }
+
+    /**
+     * Removes the directories with PREFIX in the parent, other than the ones
+     * this object tracks, that nobody has changed for $seconds: what a
+     * process killed during a request left. A symbolic link is never
+     * followed nor removed; what cannot be removed (another user's) stays.
+     *
+     * @return list<string> the directories removed
+     */
+    public function removeStale(int $seconds): array
+    {
+        $entries = @scandir($this->parent);
+        $removed = [];
+        $threshold = time() - $seconds;
+        foreach ($entries === false ? [] : $entries as $entry) {
+            if (strpos($entry, self::PREFIX) !== 0) {
+                continue;
+            }
+            $path = $this->parent . DIRECTORY_SEPARATOR . $entry;
+            if (isset($this->directories[$path]) || is_link($path) || !is_dir($path)) {
+                continue;
+            }
+            $changed = @filemtime($path);
+            if ($changed !== false && $changed < $threshold && self::removeTree($path)) {
+                $removed[] = $path;
+            }
+        }
+
+        return $removed;
     }
 
     /**
