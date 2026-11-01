@@ -60,8 +60,8 @@ use Psr\Log\LoggerInterface;
  * counts in the same Metrics, kept in METRICS_STORE.
  *
  * The /v1 route exists only when V1_SCRIPT_NAME is set, and is deprecated:
- * its responses carry Deprecation (V1_DEPRECATED_AT), Sunset (V1_SUNSET_AT)
- * and a Link to V1_DEPRECATION_NOTICE. The conversion
+ * its responses carry the Deprecation, Sunset and Link headers of
+ * V1Deprecation. The conversion
  * endpoints sit behind LimitingHandler (RATE_LIMIT, MAX_BODY_BYTES) and
  * convert with the library (LibraryConverterFactory: MAX_IMAGE_BYTES,
  * CONCURRENCY_SLOTS and CONCURRENCY_WAIT, CONVERTER_CACHE_DIR, the
@@ -75,22 +75,6 @@ final class KernelFactory
      * dead process is removed.
      */
     public const MIN_STALE_SECONDS = 3600;
-
-    /**
-     * Unix time of the deprecation of /v1: 2026-11-01T00:00:00Z, the 2.0.0
-     * release window.
-     */
-    public const V1_DEPRECATED_AT = 1793491200;
-
-    /**
-     * Unix time after which /v1 may be removed: 2027-11-01T00:00:00Z.
-     */
-    public const V1_SUNSET_AT = 1825027200;
-
-    /**
-     * The deprecation notice of /v1 in the README.
-     */
-    public const V1_DEPRECATION_NOTICE = 'https://github.com/mauriziofonte/php-image-to-webp-conversion-api#deprecated-the-1x-endpoint';
 
     private function __construct()
     {
@@ -247,9 +231,9 @@ final class KernelFactory
             );
             $routes[] = new Route('v1', '/v1/' . $v1ScriptName, ['POST'], new DeprecatedHandler(
                 new LimitingHandler($v1, $limits, $rateLimiter, $responses, $logger),
-                self::V1_DEPRECATED_AT,
-                self::V1_SUNSET_AT,
-                self::V1_DEPRECATION_NOTICE
+                V1Deprecation::DEPRECATED_AT,
+                V1Deprecation::SUNSET_AT,
+                V1Deprecation::NOTICE_URL
             ));
         }
 

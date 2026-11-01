@@ -12,6 +12,7 @@ use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
+use Mfonte\ImageConversionApi\Http\V1Deprecation;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Log\MemoryLogger;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -174,7 +175,7 @@ final class KernelTest extends TestCase
         self::assertSame('{"status":false,"version":"1.0.0","message":"No images uploaded."}', $response->getContent());
         self::assertSame('@1793491200', $response->headers->get('Deprecation'));
         self::assertSame('Mon, 01 Nov 2027 00:00:00 GMT', $response->headers->get('Sunset'));
-        self::assertSame('<' . KernelFactory::V1_DEPRECATION_NOTICE . '>; rel="deprecation"; type="text/html"', $response->headers->get('Link'));
+        self::assertSame('<' . V1Deprecation::NOTICE_URL . '>; rel="deprecation"; type="text/html"', $response->headers->get('Link'));
         self::assertSame(404, $this->handle('POST', '/v1/another-name')->getStatusCode());
     }
 

@@ -9,6 +9,7 @@ use Mfonte\ImageConversionApi\Http\Handler\DeprecatedHandler;
 use Mfonte\ImageConversionApi\Http\Handler\V1ConvertHandler;
 use Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
+use Mfonte\ImageConversionApi\Http\V1Deprecation;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V1RequestMapper;
 use Mfonte\ImageConversionApi\Mapping\V1ResponseFactory;
@@ -256,8 +257,8 @@ final class V1ConvertTest extends TestCase
         self::assertSame(429, $second->getStatusCode());
         self::assertSame(['error' => ['code' => 'rate_limited', 'message' => 'This API key sent too many requests: retry later.']], json_decode((string) $second->getContent(), true));
         foreach ([$first, $second] as $response) {
-            self::assertSame('@' . KernelFactory::V1_DEPRECATED_AT, $response->headers->get('Deprecation'));
-            self::assertSame(gmdate('D, d M Y H:i:s', KernelFactory::V1_SUNSET_AT) . ' GMT', $response->headers->get('Sunset'));
+            self::assertSame('@' . V1Deprecation::DEPRECATED_AT, $response->headers->get('Deprecation'));
+            self::assertSame(gmdate('D, d M Y H:i:s', V1Deprecation::SUNSET_AT) . ' GMT', $response->headers->get('Sunset'));
             self::assertStringContainsString('rel="deprecation"', (string) $response->headers->get('Link'));
         }
     }
