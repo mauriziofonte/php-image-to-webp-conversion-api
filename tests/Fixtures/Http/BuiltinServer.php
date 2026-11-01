@@ -52,17 +52,24 @@ final class BuiltinServer
      * @param string                $router       script run for every request
      * @param array<string, string> $environment  the whole environment of the server process
      * @param string                $logFile      receives the server's output (access log, PHP errors)
+     * @param array<string, string> $ini          php.ini settings given with -d after the defaults, which they
+     *                                            override
      *
      * @throws \RuntimeException when the server cannot be started within 10 seconds
      */
-    public static function start(string $documentRoot, string $router, array $environment, string $logFile): self
+    public static function start(string $documentRoot, string $router, array $environment, string $logFile, array $ini = []): self
     {
+        $settings = '';
+        foreach ($ini as $name => $value) {
+            $settings .= ' -d ' . escapeshellarg($name . '=' . $value);
+        }
         $lastError = '';
         for ($attempt = 0; $attempt < 5; ++$attempt) {
             $port = self::freePort();
             $command = sprintf(
-                'exec %s -d display_errors=0 -d log_errors=1 -d error_log= -S 127.0.0.1:%d -t %s %s',
+                'exec %s -d display_errors=0 -d log_errors=1 -d error_log=%s -S 127.0.0.1:%d -t %s %s',
                 escapeshellarg(PHP_BINARY),
+                $settings,
                 $port,
                 escapeshellarg($documentRoot),
                 escapeshellarg($router)

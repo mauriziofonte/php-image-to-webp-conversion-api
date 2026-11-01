@@ -15,7 +15,9 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
  * reads the environment, builds the kernel and sends its responses, and
  * answers a generic 503 when the configuration is invalid. The server speaks
  * plain HTTP: the test plays the TLS-terminating proxy at 127.0.0.1, which
- * TRUSTED_PROXIES trusts, and sends X-Forwarded-Proto.
+ * TRUSTED_PROXIES trusts, and sends X-Forwarded-Proto. The server runs with
+ * display_errors and html_errors on and error_reporting E_ALL, the worst
+ * php.ini for finding C-5: the bodies must still be the exact responses.
  *
  * @coversNothing
  */
@@ -121,10 +123,12 @@ final class FrontControllerTest extends TestCase
     {
         $server = $this->start(['V1_SCRIPT_NAME' => 'not/one/segment', 'TEMP_DIR' => 'relative']);
 
-        $response = $server->request('GET', '/healthz');
+        $response = $server->request('GET', '/healthz', ['X-Request-Id' => 'proxy-config-1']);
 
         self::assertSame(503, $response['status'], $server->getOutput());
         self::assertSame('{"error":{"code":"invalid_configuration","message":"The service is not configured correctly."}}', $response['body']);
+        self::assertSame('proxy-config-1', $response['headers']['x-request-id'] ?? null);
+        self::assertStringContainsString('"request_id":"proxy-config-1","message":"Invalid configuration"', $server->getOutput());
         self::assertStringNotContainsString('V1_SCRIPT_NAME', $response['body']);
         self::assertStringContainsString('"message":"Invalid configuration"', $server->getOutput());
         self::assertStringContainsString('V1_SCRIPT_NAME must be one URL path segment', $server->getOutput());
@@ -168,7 +172,8 @@ final class FrontControllerTest extends TestCase
             $public,
             $public . '/index.php',
             $environment + ['PATH' => is_string($path) ? $path : '/usr/bin:/bin'],
-            $this->directory->path('server.log')
+            $this->directory->path('server.log'),
+            ['display_errors' => '1', 'html_errors' => '1', 'error_reporting' => '-1']
         );
 
         return $this->server;
