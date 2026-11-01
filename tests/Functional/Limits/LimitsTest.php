@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Tests\Functional\Limits;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
+use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
 use Mfonte\ImageConversionApi\Limits\LimitingHandler;
 use Mfonte\ImageConversionApi\Limits\RequestLimits;
@@ -90,6 +92,34 @@ final class LimitsTest extends TestCase
         self::assertSame(200, $this->send($this->raw('IMAGE', self::OTHER_KEY), $config)->getStatusCode(), 'every key has its own bucket');
         self::assertSame(401, $this->send($this->raw('IMAGE', 'not-a-configured-key-012345'), $config)->getStatusCode(), 'authentication comes first');
         self::assertDirectoryExists($this->directory->path('temp/' . Config::DEFAULT_LOCK_DIR_NAME), 'the default LOCK_DIR is in TEMP_DIR');
+    }
+
+    /**
+     * The bucket file of the key is a directory, so the file store cannot
+     * update it: the request is refused, as a server error, and logged as one.
+     */
+    public function testAnswers503WhenTheRateLimitStoreFails(): void
+    {
+        $locks = $this->directory->path('locks');
+        $config = ['RATE_LIMIT' => '60', 'RATE_LIMIT_BURST' => '3', 'RATE_LIMIT_STORE' => 'file', 'LOCK_DIR' => $locks];
+        $request = $this->raw('IMAGE', self::KEY);
+        $client = (new ApiKeyAuthenticator([self::KEY]))->clientId($request);
+        self::assertNotNull($client);
+        mkdir($locks . '/ratelimit.' . $client . '.state', 0700, true);
+        chmod($locks, 0700);
+        $converter = ScriptedConverter::succeeding('WEBP');
+
+        $response = $this->send($request, $config, $converter);
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertSame(['error' => ['code' => 'rate_limit_unavailable', 'message' => 'The rate limit cannot be checked: retry later.']], json_decode((string) $response->getContent(), true));
+        self::assertSame('1', $response->headers->get('Retry-After'));
+        self::assertSame([], $converter->getCalls());
+        $errors = array_values(array_filter($this->logger->getRecords(), static function (array $record): bool {
+            return $record['level'] === 'error';
+        }));
+        self::assertCount(1, $errors);
+        self::assertSame(ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE, $errors[0]['context']['error_code'] ?? null);
     }
 
     public function testRateLimitingCanBeTurnedOff(): void

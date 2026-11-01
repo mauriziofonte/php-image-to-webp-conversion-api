@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Limits;
 
+use Mfonte\ImageConversionApi\Exception\RuntimeException;
+
 /**
  * A token bucket per API key: RATE_LIMIT requests per minute on average,
  * up to RATE_LIMIT_BURST at once after a pause.
@@ -60,6 +62,9 @@ final class RateLimiter
      *
      * @param string $client stable identifier of the client, 1 to 64 characters among [A-Za-z0-9_-]
      *
+     * @throws RuntimeException when the store cannot read and write the bucket atomically: the caller refuses the
+     *                          request (fail closed) as a server error, not as a client over its limit
+     *
      * @return int 0 when the request is allowed; otherwise the seconds to wait, at least 1
      */
     public function consume(string $client): int
@@ -80,8 +85,7 @@ final class RateLimiter
             return $arrival + $interval;
         });
         if (!$updated) {
-            // The bucket could not be read and written atomically: refuse rather than count wrongly.
-            return 1;
+            throw new RuntimeException('The rate limit store cannot update the bucket of the client.');
         }
 
         return $wait === 0 ? 0 : max(1, (int) ceil($wait / 1000000));

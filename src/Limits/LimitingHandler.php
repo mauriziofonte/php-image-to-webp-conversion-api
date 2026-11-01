@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Limits;
 
 use Mfonte\ImageConversionApi\Exception\RequestException;
+use Mfonte\ImageConversionApi\Exception\RuntimeException;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
 use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
@@ -18,7 +19,9 @@ use Symfony\Component\HttpFoundation\Response;
  * reads the body:
  *
  * 1. the rate limit of the API key (RateLimiter, when RATE_LIMIT is not
- *    0): above it, 429 rate_limited with Retry-After;
+ *    0): above it, 429 rate_limited with Retry-After; when its store
+ *    fails, 503 rate_limit_unavailable, logged at error level (the
+ *    request is refused, never let through uncounted);
  * 2. the declared size of the body (RequestLimits): above MAX_BODY_BYTES,
  *    or a multipart body above post_max_size, 413 body_too_large.
  *
@@ -73,7 +76,18 @@ final class LimitingHandler implements RequestHandlerInterface
     {
         $client = $request->attributes->get(Kernel::CLIENT_ATTRIBUTE);
         if ($this->rateLimiter !== null && is_string($client)) {
-            $wait = $this->rateLimiter->consume($client);
+            try {
+                $wait = $this->rateLimiter->consume($client);
+            } catch (RuntimeException $exception) {
+                $this->logger->error('The rate limit store failed', ['error_code' => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE, 'reason' => $exception->getMessage()]);
+
+                return $this->responses->error(
+                    503,
+                    ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE,
+                    'The rate limit cannot be checked: retry later.',
+                    ['Retry-After' => '1']
+                );
+            }
             if ($wait > 0) {
                 $this->logger->info('The API key exceeded its rate limit', ['error_code' => ResponseFactory::ERROR_RATE_LIMITED, 'retry_after' => $wait]);
 

@@ -76,6 +76,12 @@ final class ResponseFactory
     public const ERROR_RATE_LIMITED = 'rate_limited';
 
     /**
+     * 503: the rate limit store (APCu, or the files of LOCK_DIR) cannot be updated, so the request is refused rather
+     * than counted wrongly; the details are in the log.
+     */
+    public const ERROR_RATE_LIMIT_UNAVAILABLE = 'rate_limit_unavailable';
+
+    /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */
     public const PROMETHEUS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';

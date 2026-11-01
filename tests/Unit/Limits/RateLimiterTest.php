@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Tests\Unit\Limits;
 
+use Mfonte\ImageConversionApi\Exception\RuntimeException;
 use Mfonte\ImageConversionApi\Limits\RateLimiter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Limits\MemoryRateLimitStore;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -82,9 +83,11 @@ final class RateLimiterTest extends TestCase
         self::assertSame(0, $limiter->consume('second'));
     }
 
-    public function testRefusesWhenTheStoreFails(): void
+    public function testThrowsWhenTheStoreFails(): void
     {
-        self::assertSame(1, $this->limiter(new MemoryRateLimitStore(true), 60, 10)->consume('client'));
+        $this->expectException(RuntimeException::class);
+
+        $this->limiter(new MemoryRateLimitStore(true), 60, 10)->consume('client');
     }
 
     public function testAverageRateOverAMinute(): void
