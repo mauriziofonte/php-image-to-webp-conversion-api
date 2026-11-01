@@ -91,7 +91,7 @@ final class KernelFactory
         if ($converters === null) {
             $converters = new LibraryConverterFactory(
                 self::converterBuilder($config, $logger),
-                (new Limits())->withMaxBytes($config->getMaxImageBytes()),
+                self::inputLimits($config),
                 (new ConverterOptions())->withSlotWaitSeconds((float) $config->getConcurrencyWait()),
                 new ConversionSlots($config->getLockDirectory(), $config->getConcurrencySlots())
             );
@@ -110,6 +110,15 @@ final class KernelFactory
             $logger,
             $metrics
         );
+    }
+
+    /**
+     * The limits of the input images: the library's defaults, with
+     * MAX_IMAGE_BYTES as max_bytes.
+     */
+    public static function inputLimits(Config $config): Limits
+    {
+        return (new Limits())->withMaxBytes($config->getMaxImageBytes());
     }
 
     /**

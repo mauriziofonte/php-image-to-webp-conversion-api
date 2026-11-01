@@ -13,7 +13,10 @@
 #   container is checked too.
 #
 # Then tests/Integration (PHPUnit) runs against them in a php:<version>-cli
-# container on the host network.
+# container on the host network; in image mode it posts the library's
+# security corpus too, when vendor/ holds the library's tests (installed
+# with "composer reinstall mfonte/secure-image-converter
+# --prefer-install=source").
 #
 # Usage: tests/Integration/docker/run.sh [--php <version>] [--mode fpm|image|all] [--keep]
 #
@@ -307,7 +310,8 @@ run_fpm() {
 
 run_image() {
     local image https_port http_port app status id
-    export API_KEYS="$api_key" METRICS_KEYS="$metrics_key" V1_SCRIPT_NAME=convert-now TLS_DIR="$workdir/tls" \
+    # No rate limit: the security corpus alone sends some 450 requests.
+    export API_KEYS="$api_key" METRICS_KEYS="$metrics_key" V1_SCRIPT_NAME=convert-now RATE_LIMIT=0 TLS_DIR="$workdir/tls" \
         HTTPS_PUBLISH="127.0.0.1:" HTTP_PUBLISH="127.0.0.1:"
 
     log "Images for the image mode"

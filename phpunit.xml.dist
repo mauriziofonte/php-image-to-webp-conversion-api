@@ -3,7 +3,9 @@
     Valid for PHPUnit 8.5, 9.6, 10.5 and 11.5 alike: no schema location and
     only elements and attributes that all four versions understand. Notices,
     warnings and deprecations are made fatal by the error handler that
-    tests/bootstrap.php installs.
+    tests/bootstrap.php installs. The memory limit leaves room above the
+    128M of a PHP without php.ini (the official images): the suite peaks
+    near it on PHPUnit 8.5.
 -->
 <phpunit
     bootstrap="tests/bootstrap.php"
@@ -26,4 +28,7 @@
             <directory>tests/Integration</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <ini name="memory_limit" value="512M"/>
+    </php>
 </phpunit>

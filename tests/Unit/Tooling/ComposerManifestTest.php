@@ -139,8 +139,14 @@ final class ComposerManifestTest extends TestCase
             ['Mfonte\\ImageConversionApi\\' => 'src/'],
             self::section('autoload')['psr-4'] ?? null
         );
+        // The library's test fixtures (its security corpus) exist when it is
+        // installed from source: "composer reinstall
+        // mfonte/secure-image-converter --prefer-install=source".
         self::assertSame(
-            ['Mfonte\\ImageConversionApi\\Tests\\' => 'tests/'],
+            [
+                'Mfonte\\ImageConversionApi\\Tests\\' => 'tests/',
+                'Mfonte\\SecureImageConverter\\Tests\\' => 'vendor/mfonte/secure-image-converter/tests/',
+            ],
             self::section('autoload-dev')['psr-4'] ?? null
         );
     }

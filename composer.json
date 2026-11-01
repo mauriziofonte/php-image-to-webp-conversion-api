@@ -44,7 +44,8 @@
   },
   "autoload-dev": {
     "psr-4": {
-      "Mfonte\\ImageConversionApi\\Tests\\": "tests/"
+      "Mfonte\\ImageConversionApi\\Tests\\": "tests/",
+      "Mfonte\\SecureImageConverter\\Tests\\": "vendor/mfonte/secure-image-converter/tests/"
     }
   },
   "config": {

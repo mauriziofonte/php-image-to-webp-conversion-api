@@ -41,6 +41,9 @@ services:
       # The deprecated 1.x endpoint, /v1/<V1_SCRIPT_NAME>; empty: none.
       V1_SCRIPT_NAME: ${V1_SCRIPT_NAME:-}
       CONCURRENCY_SLOTS: "4"
+      # Requests per minute and burst of each key (one token per /v1 file).
+      RATE_LIMIT: ${RATE_LIMIT:-300}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-50}
       # These match the image's defaults; kept here to show what is mounted.
       TEMP_DIR: /tmp
       LOCK_DIR: /run/image-conversion-api

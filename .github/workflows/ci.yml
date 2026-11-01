@@ -110,6 +110,11 @@ jobs:
         if: matrix.deps == 'highest'
         run: composer update --no-progress
 
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
+
       - name: Show installed packages
         run: composer show
 
@@ -135,6 +140,11 @@ jobs:
 
       - name: Install dependencies (highest)
         run: composer update --no-progress
+
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
 
       # Any advisory on the resolved dependencies, or an abandoned package,
       # fails the job. The runtime floors in composer.json are chosen so that
@@ -221,9 +231,14 @@ jobs:
       - name: Install dependencies (highest)
         run: composer update --no-progress
 
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
+
       # The image installs its dependencies with Composer in a build stage;
       # the job token spares it the anonymous GitHub API rate limit.
-      - name: Build and test the hardened image behind nginx
+      - name: Build and test the hardened image behind nginx, security corpus included
         env:
           COMPOSER_AUTH: '{"github-oauth": {"github.com": "${{ github.token }}"}}'
           HARNESS_WORKDIR: ${{ runner.temp }}/harness
