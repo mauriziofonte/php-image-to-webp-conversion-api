@@ -50,6 +50,51 @@ final class ConfigTest extends TestCase
         self::assertTrue($config->isHttpsRequired());
         self::assertSame([], $config->getApiKeys());
         self::assertSame([], $config->getIpAllowlist());
+        self::assertSame(Config::DEFAULT_CONVERSION_TIME_LIMIT, $config->getConversionTimeLimit());
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function provideValidTimeLimits(): array
+    {
+        return ['smallest' => ['1'], 'typical' => ['55'], 'largest' => ['3600'], 'padded' => [' 30 ']];
+    }
+
+    /**
+     * @dataProvider provideValidTimeLimits
+     */
+    #[DataProvider('provideValidTimeLimits')]
+    public function testReadsTheConversionTimeLimit(string $value): void
+    {
+        self::assertSame((int) trim($value), Config::fromArray(['CONVERSION_TIME_LIMIT' => $value])->getConversionTimeLimit());
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function provideInvalidTimeLimits(): array
+    {
+        return [
+            'zero' => ['0'],
+            'above the maximum' => ['3601'],
+            'negative' => ['-5'],
+            'decimal' => ['1.5'],
+            'unit' => ['50s'],
+            'huge' => ['99999999999999999999'],
+        ];
+    }
+
+    /**
+     * @dataProvider provideInvalidTimeLimits
+     */
+    #[DataProvider('provideInvalidTimeLimits')]
+    public function testRefusesAnInvalidConversionTimeLimit(string $value): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('CONVERSION_TIME_LIMIT must be a whole number from 1 to 3600');
+
+        Config::fromArray(['CONVERSION_TIME_LIMIT' => $value]);
     }
 
     /**
@@ -323,7 +368,7 @@ final class ConfigTest extends TestCase
         preg_match_all('/^;?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
         $values = parse_ini_file($example);
 
-        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST'], $matches[1]);
+        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT'], $matches[1]);
         self::assertSame([], array_diff(Config::KEYS, $matches[1]));
         self::assertIsArray($values);
         self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys($values));

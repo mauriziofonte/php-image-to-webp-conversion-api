@@ -49,6 +49,16 @@ use Mfonte\ImageConversionApi\Http\IpRange;
  *   the clients allowed on the protected endpoints, in addition to the API
  *   key; the client address is taken from X-Forwarded-For only behind
  *   TRUSTED_PROXIES. Default: none, every address is allowed.
+ * - CONVERSION_TIME_LIMIT: the longest time, in whole seconds from 1 to
+ *   3600, that one conversion request may spend once its body has
+ *   arrived: waiting for a conversion slot and converting. The processing
+ *   budget of the library is capped to what is left of it, so that a
+ *   conversion is stopped by the library (conversion_timeout, 422) before
+ *   the web server or PHP-FPM gives up on the request and kills the worker.
+ *   Keep it below every timeout on the way: nginx fastcgi_read_timeout and
+ *   proxy_read_timeout (60 s by default), Apache Timeout and ProxyTimeout
+ *   (60 s), PHP-FPM request_terminate_timeout, and the timeout of the
+ *   client (the proxy's API timeout). Default: 50.
  */
 final class Config
 {
@@ -63,7 +73,19 @@ final class Config
         'API_KEY',
         'API_KEYS',
         'IP_ALLOWLIST',
+        'CONVERSION_TIME_LIMIT',
     ];
+
+    /**
+     * Default of CONVERSION_TIME_LIMIT, in seconds: below the 60-second
+     * default timeouts of nginx and Apache.
+     */
+    public const DEFAULT_CONVERSION_TIME_LIMIT = 50;
+
+    /**
+     * Largest CONVERSION_TIME_LIMIT, in seconds.
+     */
+    public const MAX_CONVERSION_TIME_LIMIT = 3600;
 
     private const BOOLEANS = [
         'true' => true,
@@ -105,6 +127,11 @@ final class Config
      * @var list<IpRange>
      */
     private $ipAllowlist = [];
+
+    /**
+     * @var int
+     */
+    private $conversionTimeLimit = self::DEFAULT_CONVERSION_TIME_LIMIT;
 
     private function __construct()
     {
@@ -211,6 +238,11 @@ final class Config
             }
         }
 
+        $timeLimit = self::integer($values, 'CONVERSION_TIME_LIMIT', 1, self::MAX_CONVERSION_TIME_LIMIT, $errors);
+        if ($timeLimit !== null) {
+            $config->conversionTimeLimit = $timeLimit;
+        }
+
         if ($errors !== []) {
             throw new InvalidConfigurationException($errors);
         }
@@ -272,6 +304,38 @@ final class Config
     public function getIpAllowlist(): array
     {
         return $this->ipAllowlist;
+    }
+
+    /**
+     * CONVERSION_TIME_LIMIT: the longest time a conversion request may spend
+     * waiting for a slot and converting, in seconds.
+     */
+    public function getConversionTimeLimit(): int
+    {
+        return $this->conversionTimeLimit;
+    }
+
+    /**
+     * Reads a whole number from $min to $max written in decimal digits.
+     *
+     * @param array<string, string|null> $values
+     * @param list<string>               $errors receives the problem, when there is one
+     *
+     * @return int|null null when the key is not set or invalid
+     */
+    private static function integer(array $values, string $key, int $min, int $max, array &$errors): ?int
+    {
+        $value = self::value($values, $key);
+        if ($value === null) {
+            return null;
+        }
+        if (preg_match('/\A[0-9]{1,10}\z/', $value) !== 1 || (int) $value < $min || (int) $value > $max) {
+            $errors[] = sprintf('%s must be a whole number from %d to %d', $key, $min, $max);
+
+            return null;
+        }
+
+        return (int) $value;
     }
 
     /**
