@@ -46,3 +46,23 @@ updates:
     groups:
       github-actions:
         update-types: [minor, patch]
+
+  # The base image of docker/Dockerfile and the images of the example and of
+  # the integration harness.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /docker
+      - /tests/Integration/docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope

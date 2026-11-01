@@ -83,7 +83,7 @@ jobs:
           while IFS= read -r -d '' file; do
             count=$((count + 1))
             output="$(php -l "$file" 2>&1)" || { printf '%s\n' "$output"; status=1; }
-          done < <(find public src tests tools/require-tool.php -type f -name '*.php' -print0 | sort -z)
+          done < <( (find public src tests -type f -name '*.php' -print0; printf '%s\0' bin/image-conversion-api tools/require-tool.php) | sort -z)
           echo "Linted $count PHP files with PHP $(php -r 'echo PHP_VERSION;')"
           exit "$status"
 
@@ -156,3 +156,84 @@ jobs:
 
       - name: Taint analysis (Psalm)
         run: composer taint
+
+  integration:
+    name: Integration (PHP ${{ matrix.php }}, Apache and nginx)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.2', '8.1', '8.5']
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      # The harness mounts vendor/ into the PHP-FPM containers and runs
+      # PHPUnit from it, so it is resolved here for the PHP version under
+      # test, dev dependencies included.
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      - name: Apache + PHP-FPM and nginx + PHP-FPM (official images)
+        env:
+          HARNESS_PHP: ${{ matrix.php }}
+          HARNESS_WORKDIR: ${{ runner.temp }}/harness
+        run: tests/Integration/docker/run.sh --php "$HARNESS_PHP" --mode fpm
+
+      - name: Upload the harness logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-logs-php-${{ matrix.php }}
+          path: |
+            ${{ runner.temp }}/harness/*.log
+            ${{ runner.temp }}/harness/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  image:
+    name: Container image (docker/Dockerfile, docker/compose.yaml)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      # The image installs its dependencies with Composer in a build stage;
+      # the job token spares it the anonymous GitHub API rate limit.
+      - name: Build and test the hardened image behind nginx
+        env:
+          COMPOSER_AUTH: '{"github-oauth": {"github.com": "${{ github.token }}"}}'
+          HARNESS_WORKDIR: ${{ runner.temp }}/harness
+        run: tests/Integration/docker/run.sh --php 8.5 --mode image
+
+      - name: Upload the harness logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-logs
+          path: ${{ runner.temp }}/harness/*.log
+          if-no-files-found: ignore
+          retention-days: 7

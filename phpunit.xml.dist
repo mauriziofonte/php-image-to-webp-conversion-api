@@ -21,5 +21,9 @@
         <testsuite name="functional">
             <directory>tests/Functional</directory>
         </testsuite>
+        <!-- Skipped unless tests/Integration/docker/run.sh starts the web servers. -->
+        <testsuite name="integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
     </testsuites>
 </phpunit>
