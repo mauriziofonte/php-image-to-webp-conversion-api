@@ -361,8 +361,16 @@ run_image() {
         local build=(docker build --network host --file "$root/docker/Dockerfile" --tag "$image" --build-arg "UBUNTU_IMAGE=$ubuntu")
         if [ -n "${HARNESS_VENDOR_CONTEXT:-}" ]; then
             build+=(--build-arg VENDOR_SOURCE=context --build-context "app-vendor=$HARNESS_VENDOR_CONTEXT")
-        elif [ -n "${COMPOSER_AUTH:-}" ]; then
-            build+=(--secret id=composer_auth,env=COMPOSER_AUTH)
+        else
+            # The Composer image of the build stage, by its resolved name too.
+            local composer_image
+            composer_image="$(sed -n 's/^ARG COMPOSER_IMAGE=//p' "$root/docker/Dockerfile")"
+            [ -n "$composer_image" ] || die "docker/Dockerfile names no COMPOSER_IMAGE"
+            composer_image="$(resolve "$composer_image")" || exit 1
+            build+=(--build-arg "COMPOSER_IMAGE=$composer_image")
+            if [ -n "${COMPOSER_AUTH:-}" ]; then
+                build+=(--secret id=composer_auth,env=COMPOSER_AUTH)
+            fi
         fi
         built_image="$image"
         "${build[@]}" "$root" || die "docker build failed"

@@ -23,6 +23,11 @@
 #       --build-context app-vendor=./vendor -t image-conversion-api .
 
 ARG UBUNTU_IMAGE=ubuntu:24.04
+# Composer of the build stage only. Ubuntu's own (2.7) refuses a GitHub
+# token with a "-", which GitHub's current installation tokens
+# ("ghs_<app id>_<JWT>", base64url) may hold, and the composer_auth secret
+# carries one in CI; Composer 2.10 no longer checks the token's format.
+ARG COMPOSER_IMAGE=composer:2.10.3@sha256:2cf275428757e5435a667bfc0d038b14520ca02be2b1b70d44a05c8c19e2de48
 # "composer" (install in a build stage) or "context" (the "app-vendor" build context).
 ARG VENDOR_SOURCE=composer
 
@@ -48,18 +53,22 @@ RUN apt-get update \
         libfcgi-bin \
     && rm -rf /var/lib/apt/lists/*
 
-# Composer, and the extensions that composer.json's require-dev needs:
+FROM ${COMPOSER_IMAGE} AS composer-binary
+
+# Composer (the official image's phar), and the extensions that
+# composer.json's require-dev needs:
 # "composer update --no-dev" still resolves the dev requirements (PHPUnit
 # needs dom, mbstring, xml and xmlwriter), it only leaves them out of
 # vendor/. Only this stage has them; the runtime image stays without.
 # curl makes the downloads faster.
 FROM runtime-base AS vendor-tools
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends composer git unzip \
+    && apt-get install -y --no-install-recommends git unzip \
         php8.3-curl \
         php8.3-mbstring \
         php8.3-xml \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=composer-binary /usr/bin/composer /usr/local/bin/composer
 
 FROM vendor-tools AS vendor-composer
 WORKDIR /build
