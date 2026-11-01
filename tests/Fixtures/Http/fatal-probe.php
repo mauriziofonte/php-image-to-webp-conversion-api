@@ -32,8 +32,13 @@ use Symfony\Component\HttpFoundation\Request;
 
 error_reporting(E_ALL);
 
-$temporaryDirectory = (string) $argv[1];
-$report = (string) $argv[2];
+$arguments = array_values(array_filter(isset($_SERVER['argv']) && is_array($_SERVER['argv']) ? $_SERVER['argv'] : [], 'is_string'));
+if (count($arguments) < 3) {
+    fwrite(STDERR, "Usage: php fatal-probe.php <temporary directory> <report>\n");
+    exit(2);
+}
+$temporaryDirectory = $arguments[1];
+$report = $arguments[2];
 
 register_shutdown_function(static function () use ($temporaryDirectory, $report): void {
     $error = error_get_last();
