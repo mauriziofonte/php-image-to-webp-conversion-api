@@ -29,9 +29,11 @@
 # "composer update" with that PHP version).
 #
 # Environment:
-#   HARNESS_IMAGE_MIRROR    registry the official images are pulled from, then
-#                           tagged with their Docker Hub names (default
-#                           mirror.gcr.io/library; empty for Docker Hub)
+#   HARNESS_IMAGE_MIRROR    registry the official images are pulled from when
+#                           their Docker Hub name is not present locally
+#                           (default mirror.gcr.io/library; empty for Docker
+#                           Hub). They run by the mirror's name: the harness
+#                           tags no image it did not build.
 #   HARNESS_WORKDIR         empty directory for the application copies, the
 #                           certificate and the logs (default: a temporary
 #                           directory, removed at the end unless --keep)
@@ -117,8 +119,10 @@ metrics_key="integration-metrics-key-$(openssl rand -hex 12)"
 server_name=images-api.example.com
 built_image=""
 
-fpm_compose() { docker compose --project-name "$fpm_project" --file "$here/compose.yaml" "$@"; }
-image_compose() { docker compose --project-name "$image_project" --file "$root/docker/compose.yaml" "$@"; }
+# Each compose file is used with an override that runs every image by the
+# local name resolve() found (see write_image_override).
+fpm_compose() { docker compose --project-name "$fpm_project" --file "$here/compose.yaml" --file "$workdir/fpm-images.yaml" "$@"; }
+image_compose() { docker compose --project-name "$image_project" --file "$root/docker/compose.yaml" --file "$workdir/image-images.yaml" "$@"; }
 
 fpm_started=0
 image_started=0
@@ -164,16 +168,36 @@ trap 'exit 130' INT TERM
 # --- helpers ----------------------------------------------------------------
 
 mirror="${HARNESS_IMAGE_MIRROR-mirror.gcr.io/library}"
-pull() {
+# resolve <image>: prints the local name to run <image> by: <image> itself
+# when it is present, otherwise its name on the mirror, pulled when missing.
+# Nothing is tagged, so images other users share are left as they are.
+resolve() {
     local image="$1" source_image
-    source_image="${mirror:+$mirror/}$image"
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
-        if ! docker image inspect "$source_image" >/dev/null 2>&1; then
-            docker pull --quiet "$source_image" >/dev/null || die "cannot pull $source_image"
-        fi
-        [ "$source_image" = "$image" ] || docker tag "$source_image" "$image"
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        printf '%s\n' "$image"
+        return
     fi
-    pass "$image"
+    source_image="${mirror:+$mirror/}$image"
+    if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+        docker pull --quiet "$source_image" >/dev/null || die "cannot pull $source_image"
+    fi
+    printf '%s\n' "$source_image"
+}
+
+# write_image_override <compose file> <override>: a compose override that
+# runs the image of every service of <compose file> by its resolved name.
+write_image_override() {
+    local compose_file="$1" file="$2" service image resolved
+    printf 'services:\n' >"$file.tmp"
+    while read -r service image; do
+        resolved="$(resolve "$image")" || exit 1
+        printf '  %s:\n    image: %s\n' "$service" "$resolved" >>"$file.tmp"
+        pass "$service: $resolved"
+    done < <(docker compose --file "$compose_file" config | awk '
+        /^[^ ]/ { in_services = ($0 == "services:") }
+        in_services && /^  [^ ].*:$/ { service = substr($1, 1, length($1) - 1) }
+        in_services && /^    image: / { print service, $2 }')
+    mv "$file.tmp" "$file"
 }
 
 wait_for() {
@@ -210,10 +234,11 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$server_name" \
 chmod 644 "$workdir/tls/$server_name.key" "$workdir/tls/$server_name.pem"
 
 log "Images (${mirror:-Docker Hub})"
-pull "php:$php_version-cli"
+php_cli="$(resolve "php:$php_version-cli")" || exit 1
+pass "$php_cli"
 
 log "vendor/ on PHP $php_version"
-docker run --rm --network none --volume "$root:/app:ro" "php:$php_version-cli" \
+docker run --rm --network none --volume "$root:/app:ro" "$php_cli" \
     php -r 'require "/app/vendor/autoload.php";' ||
     die "vendor/ does not load on PHP $php_version: install it for that version first"
 pass "vendor/autoload.php loads"
@@ -233,7 +258,7 @@ run_phpunit() {
     log "PHPUnit: $label (PHP $php_version)"
     docker run --rm --network host --user "$run_uid:$run_gid" -e HOME=/tmp \
         --volume "$root:$root:ro" --volume "$workdir:$workdir:ro" --workdir "$root" \
-        "${phpunit_env[@]}" "$@" "php:$php_version-cli" \
+        "${phpunit_env[@]}" "$@" "$php_cli" \
         php vendor/bin/phpunit --testsuite integration --do-not-cache-result ||
         die "$label: the integration tests failed"
 }
@@ -262,9 +287,7 @@ run_fpm() {
     export HARNESS_PHP_VERSION="$php_version" HARNESS_UID="$run_uid" HARNESS_GID="$run_gid" HARNESS_WORKDIR="$workdir"
 
     log "Images for the fpm mode"
-    for image in $(fpm_compose config --images | sort -u); do
-        pull "$image"
-    done
+    write_image_override "$here/compose.yaml" "$workdir/fpm-images.yaml"
 
     for s in apache nginx; do
         copy_application "$workdir/$s/app"
@@ -315,16 +338,16 @@ run_image() {
         HTTPS_PUBLISH="127.0.0.1:" HTTP_PUBLISH="127.0.0.1:"
 
     log "Images for the image mode"
-    pull nginx:1.29.8
     if [ -n "${HARNESS_IMAGE:-}" ]; then
         image="$HARNESS_IMAGE"
         docker image inspect "$image" >/dev/null 2>&1 || die "HARNESS_IMAGE $image does not exist"
         pass "$image (given)"
     else
         image="ica-harness/image-conversion-api:$suffix"
-        pull ubuntu:24.04
-        log "Building $image"
-        local build=(docker build --network host --file "$root/docker/Dockerfile" --tag "$image")
+        local ubuntu
+        ubuntu="$(resolve ubuntu:24.04)" || exit 1
+        log "Building $image (on $ubuntu)"
+        local build=(docker build --network host --file "$root/docker/Dockerfile" --tag "$image" --build-arg "UBUNTU_IMAGE=$ubuntu")
         if [ -n "${HARNESS_VENDOR_CONTEXT:-}" ]; then
             build+=(--build-arg VENDOR_SOURCE=context --build-context "app-vendor=$HARNESS_VENDOR_CONTEXT")
         elif [ -n "${COMPOSER_AUTH:-}" ]; then
@@ -335,6 +358,7 @@ run_image() {
         pass "built $image"
     fi
     export IMAGE_CONVERSION_API_IMAGE="$image"
+    write_image_override "$root/docker/compose.yaml" "$workdir/image-images.yaml"
 
     log "Starting docker/compose.yaml"
     image_started=1
