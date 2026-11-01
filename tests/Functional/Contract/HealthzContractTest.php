@@ -109,6 +109,39 @@ final class HealthzContractTest extends TestCase
     }
 
     /**
+     * The document PRX-8 parses, key by key, as it travels: schema 1 of
+     * Capabilities::toArray(). A change of the library's schema shows here
+     * before it reaches the proxy.
+     */
+    public function testTheCapabilitiesKeepSchemaOne(): void
+    {
+        $response = $this->send(self::factory(), self::request(['HTTP_X_API_KEY' => self::API_KEY]));
+
+        $data = json_decode((string) $response->getContent(), true);
+        self::assertIsArray($data);
+        self::assertIsArray($data['capabilities']);
+        $capabilities = $data['capabilities'];
+        self::assertSame(
+            ['schema', 'input_formats', 'output_formats', 'animated_output_formats', 'backends', 'isolation_level', 'limits'],
+            array_keys($capabilities)
+        );
+        self::assertSame(1, $capabilities['schema']);
+        foreach (['input_formats', 'output_formats', 'animated_output_formats', 'backends'] as $list) {
+            self::assertIsArray($capabilities[$list], $list);
+            self::assertSame(array_values($capabilities[$list]), $capabilities[$list], $list . ' is a JSON array');
+            self::assertSame([], array_filter($capabilities[$list], static function ($value): bool {
+                return !is_string($value);
+            }), $list . ' holds strings only');
+        }
+        self::assertIsString($capabilities['isolation_level']);
+        self::assertIsArray($capabilities['limits']);
+        self::assertSame(Capabilities::limitNames(), array_keys($capabilities['limits']));
+        self::assertSame([], array_filter($capabilities['limits'], static function ($value): bool {
+            return !is_int($value);
+        }), 'the limits are integers');
+    }
+
+    /**
      * A key presented to /healthz goes through the checks of every
      * protected route.
      */

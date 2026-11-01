@@ -32,7 +32,9 @@ use Symfony\Component\HttpFoundation\Response;
  *   Capabilities::fromArray()): formats, backends, isolation level and
  *   limits:
  *
- *       {"status": "ok", "capabilities": {"schema_version": 1, ...}}
+ *       {"status": "ok", "capabilities": {"schema": 1, "input_formats": [...],
+ *        "output_formats": [...], "animated_output_formats": [...],
+ *        "backends": [...], "isolation_level": "...", "limits": {...}}}
  *
  *   When the converter cannot be built (a strict isolation policy the
  *   host cannot meet, an unusable LOCK_DIR), the answer is 503
