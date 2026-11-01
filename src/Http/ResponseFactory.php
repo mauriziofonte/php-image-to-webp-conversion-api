@@ -67,6 +67,12 @@ final class ResponseFactory
     public const ERROR_UNSUPPORTED_MEDIA_TYPE = 'unsupported_media_type';
 
     /**
+     * 413: the declared body of a conversion request is larger than MAX_BODY_BYTES, or a multipart body is larger
+     * than PHP's post_max_size.
+     */
+    public const ERROR_BODY_TOO_LARGE = 'body_too_large';
+
+    /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */
     public const PROMETHEUS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
