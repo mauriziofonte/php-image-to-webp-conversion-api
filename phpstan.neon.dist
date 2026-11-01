@@ -21,6 +21,7 @@ parameters:
     level: max
     phpVersion: 70205
     paths:
+        - bin/image-conversion-api
         - public
         - src
         - tests

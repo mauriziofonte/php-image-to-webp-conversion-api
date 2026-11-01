@@ -131,11 +131,20 @@ final class KernelFactory
      * The settings of the library's converters: the library's defaults,
      * the logger, and CONVERTER_CACHE_DIR for the capability cache of the
      * backends and the cache of the isolation detector, when it is set.
+     *
+     * @param bool $withCache false to probe without any cache, so that
+     *                        nothing is written (check-env, which may run
+     *                        as another user than PHP-FPM)
      */
-    private static function converterBuilder(Config $config, LoggerInterface $logger): SecureConverterBuilder
+    public static function converterBuilder(Config $config, LoggerInterface $logger, bool $withCache = true): SecureConverterBuilder
     {
         $backendOptions = (new BackendOptions())->withLogger($logger);
         $builder = new SecureConverterBuilder();
+        if (!$withCache) {
+            return $builder
+                ->withBackendOptions($backendOptions->withCapabilityCache(false))
+                ->withIsolationDetector(new IsolationDetector(new ProcessOptions(), null, 0, $logger));
+        }
         $cacheDirectory = $config->getConverterCacheDirectory();
         if ($cacheDirectory !== null) {
             $backendOptions = $backendOptions->withCapabilityCache(true, $cacheDirectory);

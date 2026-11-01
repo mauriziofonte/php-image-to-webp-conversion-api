@@ -14,7 +14,7 @@ use PhpCsFixer\Finder;
  */
 $finder = Finder::create()
     ->in([__DIR__ . '/src', __DIR__ . '/tests', __DIR__ . '/public'])
-    ->append([__FILE__, __DIR__ . '/tools/require-tool.php']);
+    ->append([__FILE__, __DIR__ . '/bin/image-conversion-api', __DIR__ . '/tools/require-tool.php']);
 
 return (new Config())
     ->setRiskyAllowed(true)

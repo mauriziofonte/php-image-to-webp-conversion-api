@@ -75,7 +75,10 @@
       "@cs:check",
       "@analyse",
       "@test"
-    ]
+    ],
+    "check-env": "@php bin/image-conversion-api check-env",
+    "post-install-cmd": "@php bin/image-conversion-api check-env --informational",
+    "post-update-cmd": "@php bin/image-conversion-api check-env --informational"
   },
   "scripts-descriptions": {
     "test": "Run the PHPUnit test suite.",
@@ -83,6 +86,7 @@
     "cs:check": "Report coding style violations as a diff, without changing files (needs tools/php-cs-fixer).",
     "cs:fix": "Fix coding style violations in place (needs tools/php-cs-fixer).",
     "taint": "Run the Psalm taint analysis on src/ (needs tools/psalm).",
+    "check-env": "Validate the configuration (environment and .env) and the host, and exit non-zero on any error.",
     "ci": "Run cs:check, analyse and test, in this order."
   }
 }
