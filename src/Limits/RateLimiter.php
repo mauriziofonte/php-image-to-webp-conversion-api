@@ -21,6 +21,11 @@ use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as Library
  * beyond the refill. The wait it is told (Retry-After) is the time until
  * the next token, rounded up to whole seconds.
  *
+ * A request may cost several tokens (POST /v1 costs one per file): it is
+ * allowed when the arrival time pushed by all of them but one is within
+ * the tolerance, and then pushes it by all of them. The cost is capped at
+ * the burst, so that a request is never refused for ever.
+ *
  * Clocks: the arrival time is never pulled back towards now. When the
  * wall clock steps back by D, a key that spent its burst is refused for
  * about D more seconds: the error is on the safe side, never more
@@ -48,6 +53,11 @@ final class RateLimiter
     private $tolerance;
 
     /**
+     * @var int the most tokens one request may cost
+     */
+    private $burst;
+
+    /**
      * @var callable(): int
      */
     private $clock;
@@ -61,16 +71,19 @@ final class RateLimiter
     {
         $this->store = $store;
         $this->interval = max(1, intdiv(60000000, max(1, $perMinute)));
-        $this->tolerance = $this->interval * (max(1, $burst) - 1);
+        $this->burst = max(1, $burst);
+        $this->tolerance = $this->interval * ($this->burst - 1);
         $this->clock = $clock ?? static function (): int {
             return (int) round(microtime(true) * 1000000);
         };
     }
 
     /**
-     * Takes a token from the bucket of $client.
+     * Takes $cost tokens from the bucket of $client.
      *
      * @param string $client stable identifier of the client, 1 to 64 characters among [A-Za-z0-9_-]
+     * @param int    $cost   tokens the request costs, from 1 to the burst (smaller and larger values are
+     *                       brought into that range)
      *
      * @throws RuntimeException when the store cannot read and write the bucket atomically, or is not usable (a
      *                          LOCK_DIR that is not private, with the library's exception as the previous one):
@@ -79,22 +92,23 @@ final class RateLimiter
      *
      * @return int 0 when the request is allowed; otherwise the seconds to wait, at least 1
      */
-    public function consume(string $client): int
+    public function consume(string $client, int $cost = 1): int
     {
         $now = ($this->clock)();
         $interval = $this->interval;
         $tolerance = $this->tolerance;
+        $extra = $interval * (min(max(1, $cost), $this->burst) - 1);
         $wait = 0;
-        $decide = static function (?int $arrival) use ($now, $interval, $tolerance, &$wait): ?int {
+        $decide = static function (?int $arrival) use ($now, $interval, $tolerance, $extra, &$wait): ?int {
             $arrival = $arrival === null ? $now : max($arrival, $now);
-            if ($arrival - $now > $tolerance) {
-                $wait = $arrival - $now - $tolerance;
+            if ($arrival + $extra - $now > $tolerance) {
+                $wait = $arrival + $extra - $now - $tolerance;
 
                 return null;
             }
             $wait = 0;
 
-            return $arrival + $interval;
+            return $arrival + $extra + $interval;
         };
 
         try {

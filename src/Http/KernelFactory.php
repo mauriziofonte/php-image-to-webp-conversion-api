@@ -35,6 +35,7 @@ use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
 use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
 use Mfonte\SecureImageConverter\Validation\Limits;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Builds the object graph of the service from its configuration, with
@@ -219,9 +220,10 @@ final class KernelFactory
 
         $v1ScriptName = $config->getV1ScriptName();
         if ($v1ScriptName !== null) {
+            $v1Mapper = new V1RequestMapper();
             $v1 = new V1ConvertHandler(
                 $converters,
-                new V1RequestMapper(),
+                $v1Mapper,
                 new V1ResponseFactory(),
                 new ErrorMapper(),
                 $logger,
@@ -230,7 +232,10 @@ final class KernelFactory
                 $metrics
             );
             $routes[] = new Route('v1', '/v1/' . $v1ScriptName, ['POST'], new DeprecatedHandler(
-                new LimitingHandler($v1, $limits, $rateLimiter, $responses, $logger),
+                // One rate limit token per file: a batch of ten costs what ten /v2 requests do.
+                new LimitingHandler($v1, $limits, $rateLimiter, $responses, $logger, static function (Request $request) use ($v1Mapper): int {
+                    return $v1Mapper->rateLimitCost($request);
+                }),
                 V1Deprecation::DEPRECATED_AT,
                 V1Deprecation::SUNSET_AT,
                 V1Deprecation::NOTICE_URL

@@ -38,6 +38,38 @@ final class RateLimiterTest extends TestCase
         self::assertSame(1, $limiter->consume('client'));
     }
 
+    /**
+     * A request that costs several tokens takes them all, or none.
+     */
+    public function testARequestMayCostSeveralTokens(): void
+    {
+        $limiter = $this->limiter(new MemoryRateLimitStore(), 60, 5);
+
+        self::assertSame(0, $limiter->consume('client', 3));
+        self::assertSame(1, $limiter->consume('client', 3), 'two tokens left: refused, nothing taken');
+        self::assertSame(0, $limiter->consume('client', 2));
+        self::assertSame(1, $limiter->consume('client'));
+
+        $this->now += 2000000;
+        self::assertSame(1, $limiter->consume('client', 3), 'two tokens refilled, three needed: one more second');
+        self::assertSame(0, $limiter->consume('client', 2));
+    }
+
+    /**
+     * The cost is capped at the burst, so that a large request is delayed,
+     * never refused for ever; a cost below 1 counts as 1.
+     */
+    public function testTheCostIsCappedAtTheBurst(): void
+    {
+        $limiter = $this->limiter(new MemoryRateLimitStore(), 60, 4);
+
+        self::assertSame(0, $limiter->consume('client', 10));
+        self::assertSame(1, $limiter->consume('client', 0));
+        $this->now += 4000000;
+        self::assertSame(0, $limiter->consume('client', 100));
+        self::assertSame(4, $limiter->consume('client', 4));
+    }
+
     public function testTellsHowLongToWait(): void
     {
         $limiter = $this->limiter(new MemoryRateLimitStore(), 6, 1);

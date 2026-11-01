@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Mapping;
 
+use Mfonte\ImageConversionApi\Http\InputReader;
 use Mfonte\SecureImageConverter\Contract\ConversionRequest;
 use Mfonte\SecureImageConverter\Contract\Exception\InvalidRequestException;
 use Mfonte\SecureImageConverter\Contract\ImageFormat;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -66,6 +68,50 @@ final class V1RequestMapper
     ];
 
     private const BYTE_UNITS = ['B', 'kB', 'MB', 'GB', 'TB'];
+
+    /**
+     * The files of the field "images", in order: a file input left empty is
+     * null. Null when there is none, or when the field is not a list of
+     * files.
+     *
+     * @return array<int, UploadedFile|null>|null
+     */
+    public function files(Request $request): ?array
+    {
+        if (!InputReader::isMultipart($request)) {
+            return null;
+        }
+        $field = $request->files->all()[self::FIELD_IMAGES] ?? null;
+        if ($field instanceof UploadedFile) {
+            return [$field];
+        }
+        if (!is_array($field) || $field === []) {
+            return null;
+        }
+        $files = [];
+        foreach (array_values($field) as $index => $file) {
+            if ($file !== null && !$file instanceof UploadedFile) {
+                return null;
+            }
+            $files[$index] = $file;
+        }
+
+        return $files;
+    }
+
+    /**
+     * The rate limit tokens a request costs: one per file it carries (empty
+     * file inputs aside), and one for a request without any, which is
+     * refused but still counted.
+     */
+    public function rateLimitCost(Request $request): int
+    {
+        $files = $this->files($request);
+
+        return $files === null ? 1 : max(1, count(array_filter($files, static function (?UploadedFile $file): bool {
+            return $file !== null;
+        })));
+    }
 
     /**
      * The conversion request of the query string.

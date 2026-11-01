@@ -7,7 +7,6 @@ namespace Mfonte\ImageConversionApi\Http\Handler;
 use Mfonte\ImageConversionApi\Conversion\ConverterFactoryInterface;
 use Mfonte\ImageConversionApi\Conversion\Deadline;
 use Mfonte\ImageConversionApi\Exception\RequestException;
-use Mfonte\ImageConversionApi\Http\InputReader;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
 use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
@@ -157,7 +156,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
     public function handle(Request $request, RequestDirectory $directory): Response
     {
         $deadline = Deadline::forRequest($request, (float) $this->timeLimitSeconds);
-        $files = $this->files($request);
+        $files = $this->mapper->files($request);
         if ($files === null) {
             return $this->refuse(400, self::ERROR_NO_IMAGES, 'No images uploaded.');
         }
@@ -278,36 +277,6 @@ final class V1ConvertHandler implements RequestHandlerInterface
             'image' => $output,
             'imageBytes' => $outputBytes,
         ];
-    }
-
-    /**
-     * The files of the field "images", in order: a file input left empty is
-     * null. Null when there is none, or when the field is not a list of
-     * files.
-     *
-     * @return array<int, UploadedFile|null>|null
-     */
-    private function files(Request $request): ?array
-    {
-        if (!InputReader::isMultipart($request)) {
-            return null;
-        }
-        $field = $request->files->all()[V1RequestMapper::FIELD_IMAGES] ?? null;
-        if ($field instanceof UploadedFile) {
-            return [$field];
-        }
-        if (!is_array($field) || $field === []) {
-            return null;
-        }
-        $files = [];
-        foreach (array_values($field) as $index => $file) {
-            if ($file !== null && !$file instanceof UploadedFile) {
-                return null;
-            }
-            $files[$index] = $file;
-        }
-
-        return $files;
     }
 
     /**

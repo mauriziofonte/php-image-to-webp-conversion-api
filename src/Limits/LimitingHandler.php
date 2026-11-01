@@ -20,7 +20,9 @@ use Symfony\Component\HttpFoundation\Response;
  * reads the body:
  *
  * 1. the rate limit of the API key (RateLimiter, when RATE_LIMIT is not
- *    0): above it, 429 rate_limited with Retry-After; when its store
+ *    0), one token per request unless a cost function says otherwise
+ *    (POST /v1: one per file): above it, 429 rate_limited with
+ *    Retry-After; when its store
  *    fails, 503 rate_limit_unavailable, logged at error level (the
  *    request is refused, never let through uncounted);
  * 2. the declared size of the body (RequestLimits): above MAX_BODY_BYTES,
@@ -57,20 +59,30 @@ final class LimitingHandler implements RequestHandlerInterface
     private $logger;
 
     /**
-     * @param RateLimiter|null $rateLimiter null when rate limiting is off
+     * @var callable(Request): int
+     */
+    private $cost;
+
+    /**
+     * @param RateLimiter|null              $rateLimiter null when rate limiting is off
+     * @param (callable(Request): int)|null $cost        the tokens a request costs; one when null
      */
     public function __construct(
         RequestHandlerInterface $inner,
         RequestLimits $limits,
         ?RateLimiter $rateLimiter,
         ResponseFactory $responses,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        ?callable $cost = null
     ) {
         $this->inner = $inner;
         $this->limits = $limits;
         $this->rateLimiter = $rateLimiter;
         $this->responses = $responses;
         $this->logger = $logger;
+        $this->cost = $cost ?? static function (): int {
+            return 1;
+        };
     }
 
     public function handle(Request $request, RequestDirectory $directory): Response
@@ -78,7 +90,8 @@ final class LimitingHandler implements RequestHandlerInterface
         $client = $request->attributes->get(Kernel::CLIENT_ATTRIBUTE);
         if ($this->rateLimiter !== null && is_string($client)) {
             try {
-                $wait = $this->rateLimiter->consume($client);
+                $cost = ($this->cost)($request);
+                $wait = $this->rateLimiter->consume($client, $cost);
             } catch (RuntimeException $exception) {
                 $this->logger->error('The rate limit store failed: {reason}', [
                     JsonLogger::ERROR_CODE => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE,
@@ -94,7 +107,11 @@ final class LimitingHandler implements RequestHandlerInterface
                 );
             }
             if ($wait > 0) {
-                $this->logger->info('The API key exceeded its rate limit', [JsonLogger::ERROR_CODE => ResponseFactory::ERROR_RATE_LIMITED, 'retry_after' => $wait]);
+                $this->logger->info('The API key exceeded its rate limit', [
+                    JsonLogger::ERROR_CODE => ResponseFactory::ERROR_RATE_LIMITED,
+                    'retry_after' => $wait,
+                    'cost' => $cost,
+                ]);
 
                 return $this->responses->error(
                     429,

@@ -128,6 +128,29 @@ final class V1ConvertTest extends TestCase
     }
 
     /**
+     * Each file of a batch costs one rate limit token, as one /v2/convert
+     * request does; a batch above the burst costs the burst.
+     */
+    public function testEachFileCostsOneRateLimitToken(): void
+    {
+        $converter = ScriptedConverter::succeeding(self::OUTPUT);
+        $config = ['RATE_LIMIT' => '60', 'RATE_LIMIT_BURST' => '3', 'RATE_LIMIT_STORE' => 'file'];
+
+        self::assertSame(200, $this->send($converter, $this->request(['a.png', 'b.png']), $config)->getStatusCode());
+        $refused = $this->send($converter, $this->request(['c.png', 'd.png']), $config);
+        self::assertSame(429, $refused->getStatusCode(), 'one token left, two files');
+        self::assertSame('1', $refused->headers->get('Retry-After'));
+        self::assertSame(200, $this->send($converter, $this->request(['e.png']), $config)->getStatusCode());
+        self::assertCount(3, $converter->getCalls());
+        self::assertSame(2, $this->logged('cost', 2)['cost'] ?? null);
+
+        // A fresh bucket (another LOCK_DIR): five files with a burst of three pass, and empty it.
+        $fresh = $config + ['LOCK_DIR' => $this->directory->path('fresh-locks')];
+        self::assertSame(200, $this->send($converter, $this->request(['1.png', '2.png', '3.png', '4.png', '5.png']), $fresh)->getStatusCode());
+        self::assertSame(429, $this->send($converter, $this->request(['6.png']), $fresh)->getStatusCode());
+    }
+
+    /**
      * Each file of a batch is counted in the metrics with its own outcome.
      */
     public function testCountsEachFileInTheMetrics(): void
