@@ -28,6 +28,9 @@
     "phpunit/phpunit": "^8.5.52 || ^9.6.33 || ^10.5.62 || ^11.5.50",
     "yoast/phpunit-polyfills": "^2.0 || ^3.0 || ^4.0"
   },
+  "suggest": {
+    "ext-apcu": "Keeps the per-key rate limit counters in shared memory (RATE_LIMIT_STORE=auto or apcu) instead of files in LOCK_DIR."
+  },
   "autoload": {
     "psr-4": {
       "Mfonte\\ImageConversionApi\\": "src/"

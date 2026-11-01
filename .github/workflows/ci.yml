@@ -61,12 +61,16 @@ jobs:
           persist-credentials: false
 
       # The development php.ini reports every error and enables assertions.
+      # APCu, enabled for the CLI, lets the tests run the APCu rate limit
+      # store (they skip it where the extension is missing).
       - name: Set up PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           ini-file: development
+          extensions: apcu
+          ini-values: apc.enable_cli=1
           tools: composer:v2
 
       # PHPStan's PHP 7.2 run does not report every construct that older PHP
