@@ -50,6 +50,9 @@ use Psr\Log\LogLevel;
  *   each of its bytes): a shorter one makes the configuration invalid,
  *   and the service answers 503 invalid_configuration. With neither set, every protected endpoint
  *   answers 503 authentication_not_configured: the service fails closed.
+ *   A key may be given as its SHA-256 digest instead, "sha256:<64 hex
+ *   digits>" (here and in METRICS_KEYS), so that the configuration does
+ *   not hold the key itself (ApiKeyAuthenticator::DIGEST_PREFIX).
  * - IP_ALLOWLIST: comma-separated IPs and CIDR blocks (IPv4 and IPv6) of
  *   the clients allowed on the protected endpoints, in addition to the API
  *   key; the client address is taken from X-Forwarded-For only behind

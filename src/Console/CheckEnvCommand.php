@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Console;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Config\ConfigLoader;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
@@ -31,9 +32,11 @@ use Symfony\Component\Console\Output\OutputInterface;
  * - warnings: ext-posix missing (the library then keeps no capability or
  *   isolation cache, and every process probes again, for seconds);
  *   LOCK_DIR under /tmp or /var/tmp, which systemd-tmpfiles ages out;
- *   REQUIRE_HTTPS off; no isolation; the php.ini limits of this SAPI
- *   (post_max_size, upload_max_filesize, max_file_uploads) below the
- *   service's.
+ *   REQUIRE_HTTPS off; no isolation; API or metrics keys configured as
+ *   themselves rather than as digests while the conversions run without
+ *   the sandbox, which lets a conversion read them; the php.ini limits of
+ *   this SAPI (post_max_size, upload_max_filesize, max_file_uploads)
+ *   below the service's.
  *
  * It creates nothing: the directories are checked, not created, because
  * the command often runs as another user (root during "composer install")
@@ -316,6 +319,18 @@ final class CheckEnvCommand extends Command
         }
         if ($capabilities->getIsolationLevel() === IsolationLevel::NONE) {
             $warnings[] = 'The conversions run inside the PHP process, without isolation (proc_open is disabled): a decoder crash takes the worker down.';
+        }
+        if ($capabilities->getIsolationLevel() !== IsolationLevel::SANDBOX) {
+            $plain = array_filter(array_merge($config->getApiKeys(), $config->getMetricsKeys()), static function (string $key): bool {
+                return !ApiKeyAuthenticator::isDigest($key);
+            });
+            if ($plain !== []) {
+                $warnings[] = sprintf(
+                    '%d key(s) of API_KEY, API_KEYS and METRICS_KEYS are configured as themselves, and the conversions run without the sandbox isolation (%s), as the PHP user: a hostile image that takes over a decoder can read them from the environment or .env. Configure their SHA-256 digests instead ("sha256:<hex>", see .env.example).',
+                    count($plain),
+                    $capabilities->getIsolationLevel()
+                );
+            }
         }
     }
 }

@@ -46,6 +46,13 @@ use Symfony\Component\HttpFoundation\Request;
  * Every configured key is at least MINIMUM_KEY_LENGTH bytes long: a
  * shorter key can be guessed faster than a per-key rate limit slows the
  * guessing down.
+ *
+ * A key may be configured as its SHA-256 digest instead,
+ * "sha256:<64 hexadecimal digits>" (DIGEST_PREFIX), so that the key
+ * itself is not held by the configuration: the environment of PHP-FPM
+ * can be read by the processes of its user, conversions included when
+ * they run without the sandbox isolation. Such an entry is never taken
+ * as a key; the length of the key behind it cannot be checked.
  */
 final class ApiKeyAuthenticator
 {
@@ -67,6 +74,12 @@ final class ApiKeyAuthenticator
      */
     public const MINIMUM_KEY_LENGTH = 16;
 
+    /**
+     * Prefix of a key configured as the SHA-256 digest of the key, in
+     * hexadecimal: printf '%s' "$KEY" | sha256sum.
+     */
+    public const DIGEST_PREFIX = 'sha256:';
+
     private const KEY_HEADERS = ['X-API-Key', '-X-API-Key'];
 
     /**
@@ -81,12 +94,13 @@ final class ApiKeyAuthenticator
     private $hmacKey;
 
     /**
-     * @var list<string> raw HMAC-SHA256 digests of the configured keys
+     * @var list<string> raw HMAC-SHA256 digests of the SHA-256 digests of the configured keys
      */
     private $digests = [];
 
     /**
-     * @param list<string> $keys the accepted keys, compared after trimming; empty refuses every request
+     * @param list<string> $keys the accepted keys, compared after trimming, or their digests
+     *                           ("sha256:<hex>"); empty refuses every request
      *
      * @throws InvalidArgumentException when a key is shorter than MINIMUM_KEY_LENGTH (blank included)
      */
@@ -95,11 +109,24 @@ final class ApiKeyAuthenticator
         $this->hmacKey = random_bytes(32);
         foreach ($keys as $key) {
             $key = trim($key);
-            if (strlen($key) < self::MINIMUM_KEY_LENGTH) {
-                throw new InvalidArgumentException(sprintf('An API key must be at least %d bytes long', self::MINIMUM_KEY_LENGTH));
+            $sha256 = self::configuredDigest($key);
+            if ($sha256 === null) {
+                if (strlen($key) < self::MINIMUM_KEY_LENGTH) {
+                    throw new InvalidArgumentException(sprintf('An API key must be at least %d bytes long', self::MINIMUM_KEY_LENGTH));
+                }
+                $sha256 = hash('sha256', $key, true);
             }
-            $this->digests[] = $this->digest($key);
+            $this->digests[] = $this->digest($sha256);
         }
+    }
+
+    /**
+     * Whether $key is configured as a digest ("sha256:<hex>") rather than
+     * as the key itself.
+     */
+    public static function isDigest(string $key): bool
+    {
+        return self::configuredDigest(trim($key)) !== null;
     }
 
     /**
@@ -132,7 +159,7 @@ final class ApiKeyAuthenticator
             return self::MISSING_KEY;
         }
 
-        $digest = $this->digest($presented);
+        $digest = $this->digest(hash('sha256', $presented, true));
         $matched = false;
         foreach ($this->digests as $known) {
             // hash_equals() first, so that it runs for every key even after a match.
@@ -182,8 +209,25 @@ final class ApiKeyAuthenticator
         return null;
     }
 
-    private function digest(string $key): string
+    /**
+     * The raw SHA-256 digest a "sha256:<hex>" entry names; null for a key.
+     */
+    private static function configuredDigest(string $key): ?string
     {
-        return hash_hmac('sha256', $key, $this->hmacKey, true);
+        if (preg_match('/\A' . preg_quote(self::DIGEST_PREFIX, '/') . '([0-9a-f]{64})\z/i', $key, $match) !== 1) {
+            return null;
+        }
+        $raw = hex2bin(strtolower($match[1]));
+
+        return is_string($raw) ? $raw : null;
+    }
+
+    /**
+     * The value compared: an HMAC of the SHA-256 digest of a key, of one
+     * length whatever the key.
+     */
+    private function digest(string $sha256): string
+    {
+        return hash_hmac('sha256', $sha256, $this->hmacKey, true);
     }
 }

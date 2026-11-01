@@ -130,6 +130,26 @@ final class AuthenticationTest extends TestCase
     }
 
     /**
+     * Keys configured as their SHA-256 digests (API_KEY, API_KEYS and
+     * METRICS_KEYS alike), so that the environment holds no key.
+     */
+    public function testKeysMayBeConfiguredAsTheirDigests(): void
+    {
+        $metricsKey = 'scraper-key-0123456789';
+        $digests = [
+            'API_KEY' => 'sha256:' . hash('sha256', self::KEY),
+            'API_KEYS' => 'sha256:' . hash('sha256', self::NEXT_KEY),
+            'METRICS_KEYS' => 'sha256:' . hash('sha256', $metricsKey),
+        ];
+
+        self::assertSame(400, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => self::KEY], $digests)->getStatusCode());
+        self::assertSame(400, $this->handle('POST', '/v2/convert', ['HTTP_AUTHORIZATION' => 'Bearer ' . self::NEXT_KEY], $digests)->getStatusCode());
+        self::assertSame(401, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => $digests['API_KEY']], $digests)->getStatusCode());
+        self::assertSame(401, $this->handle('POST', '/v2/convert', ['HTTP_X_API_KEY' => $metricsKey], $digests)->getStatusCode());
+        self::assertSame(200, $this->handle('GET', '/metrics', ['HTTP_X_API_KEY' => $metricsKey], $digests)->getStatusCode());
+    }
+
+    /**
      * @return array<string, array{array<string, string|null>}>
      */
     public static function provideMissingConfigurations(): array

@@ -200,6 +200,67 @@ final class ApiKeyAuthenticatorTest extends TestCase
     }
 
     /**
+     * A key configured as its SHA-256 digest: the key authenticates, in
+     * any case of the hexadecimal digits and next to plain keys; the
+     * digest itself is no key, and identifies the client as the key does.
+     */
+    public function testAcceptsAKeyConfiguredAsItsDigest(): void
+    {
+        $digest = ApiKeyAuthenticator::DIGEST_PREFIX . hash('sha256', self::KEY);
+        foreach ([$digest, ' ' . strtoupper($digest) . "\n", 'SHA256:' . hash('sha256', self::KEY)] as $configured) {
+            $authenticator = new ApiKeyAuthenticator([self::NEXT_KEY, $configured]);
+
+            self::assertSame(ApiKeyAuthenticator::AUTHENTICATED, $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => self::KEY])), $configured);
+            self::assertSame(ApiKeyAuthenticator::AUTHENTICATED, $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => self::NEXT_KEY])), $configured);
+            self::assertSame(ApiKeyAuthenticator::INVALID_KEY, $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => $digest])), 'the digest is no key');
+            self::assertSame(
+                (new ApiKeyAuthenticator([self::KEY]))->clientId(self::request(['HTTP_X_API_KEY' => self::KEY])),
+                $authenticator->clientId(self::request(['HTTP_X_API_KEY' => self::KEY]))
+            );
+        }
+    }
+
+    /**
+     * @return array<string, array{string, bool}>
+     */
+    public static function provideDigestShapes(): array
+    {
+        $hex = hash('sha256', self::KEY);
+
+        return [
+            'digest' => ['sha256:' . $hex, true],
+            'upper case, blanks' => [' SHA256:' . strtoupper($hex) . ' ', true],
+            'one digit short' => ['sha256:' . substr($hex, 1), false],
+            'not hexadecimal' => ['sha256:' . str_repeat('g', 64), false],
+            'another algorithm' => ['sha512:' . $hex, false],
+        ];
+    }
+
+    /**
+     * Only the exact shape is a digest; anything else is a key, checked as
+     * a key (its length included).
+     *
+     * @dataProvider provideDigestShapes
+     */
+    #[DataProvider('provideDigestShapes')]
+    public function testRecognisesOnlyTheDigestShape(string $configured, bool $isDigest): void
+    {
+        $authenticator = new ApiKeyAuthenticator([$configured]);
+
+        self::assertSame($isDigest, ApiKeyAuthenticator::isDigest($configured));
+        self::assertSame(
+            $isDigest ? ApiKeyAuthenticator::AUTHENTICATED : ApiKeyAuthenticator::INVALID_KEY,
+            $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => self::KEY])),
+            'the key behind the digest'
+        );
+        self::assertSame(
+            $isDigest ? ApiKeyAuthenticator::INVALID_KEY : ApiKeyAuthenticator::AUTHENTICATED,
+            $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => trim($configured)])),
+            'the configured value itself'
+        );
+    }
+
+    /**
      * The identifier of a key is the same in every process and for every
      * header shape, differs between keys, and does not contain the key.
      */

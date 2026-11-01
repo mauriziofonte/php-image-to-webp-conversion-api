@@ -235,6 +235,34 @@ final class CheckEnvCommandTest extends TestCase
         self::assertStringContainsString('✓ Environment check passed.', $output);
     }
 
+    /**
+     * Without the sandbox, a conversion runs as the PHP user and can read
+     * the keys from the environment: digests are recommended.
+     */
+    public function testWarnsAboutPlainKeysWithoutTheSandbox(): void
+    {
+        $this->capabilities = self::capabilities(IsolationLevel::RLIMIT, [ImageFormat::WEBP]);
+        $this->environment['METRICS_KEYS'] = 'scraper-key-0123456789';
+
+        list($exitCode, $output) = $this->check();
+
+        self::assertSame(0, $exitCode, $output);
+        self::assertStringContainsString('2 key(s) of API_KEY, API_KEYS and METRICS_KEYS are configured as themselves', $output);
+        self::assertStringContainsString('without the sandbox isolation (rlimit)', $output);
+        self::assertStringNotContainsString(self::API_KEY, $output);
+        self::assertStringNotContainsString('scraper-key-0123456789', $output);
+
+        $this->environment['API_KEY'] = 'sha256:' . hash('sha256', self::API_KEY);
+        $this->environment['METRICS_KEYS'] = 'sha256:' . hash('sha256', 'scraper-key-0123456789');
+        list(, $output) = $this->check();
+        self::assertStringNotContainsString('configured as themselves', $output, 'digests only');
+
+        $this->environment['API_KEY'] = self::API_KEY;
+        $this->capabilities = self::capabilities(IsolationLevel::SANDBOX, [ImageFormat::WEBP]);
+        list(, $output) = $this->check();
+        self::assertStringNotContainsString('configured as themselves', $output, 'with the sandbox');
+    }
+
     public function testUnlimitedIniValuesPass(): void
     {
         $this->environment['V1_SCRIPT_NAME'] = 'convert-now';

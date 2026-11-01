@@ -81,7 +81,7 @@ By using this external microservice, you can **offload the conversion process to
 ## Configuring the `.env` File
 
 * **SCRIPT\_NAME**: The endpoint name that will be whitelisted to allow requests to the microservice.
-* **API\_KEY**: The API key that clients send as `Authorization: Bearer <key>` or in the `X-API-Key` header. Use at least 16 bytes (a multibyte character counts for each of its bytes): the 2.x service refuses shorter keys.
+* **API\_KEY**: The API key that clients send as `Authorization: Bearer <key>` or in the `X-API-Key` header. Use at least 16 bytes (a multibyte character counts for each of its bytes): the 2.x service refuses shorter keys. `API_KEY`, `API_KEYS` and `METRICS_KEYS` also take a key's SHA-256 digest, `sha256:<hex>` (`printf '%s' "$KEY" | sha256sum`), so that the configuration does not hold the key itself: recommended, see **Deployment**.
 
 **Example:**
 
