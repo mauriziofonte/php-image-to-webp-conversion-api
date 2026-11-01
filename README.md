@@ -38,11 +38,21 @@ It now converts with the library and the limits of `/v2/convert`, which changes 
 - **`GET /metrics`** is the Prometheus exposition (requests by route and status, conversions by outcome, durations). It needs an API key or one of `METRICS_KEYS`, which open `/metrics` only; the counters are kept in `METRICS_STORE` (APCu, or a file of `LOCK_DIR`).
 - **Logs** are JSON lines (`LOG_FILE`, `LOG_LEVEL`) with a `request_id`: the `X-Request-Id` the client sent (the proxy's), or a new one, which every response echoes. PHP errors are logged, never displayed.
 
+## Deployment
+
+- **Apache**: `public/.htaccess` (document root `public/`) or the root `.htaccess` (installation directory served as is); `mod_rewrite` and `AllowOverride FileInfo`.
+- **nginx**: `deploy/nginx/image-conversion-api.conf` and `deploy/nginx/upstream.conf` (TLS, `client_max_body_size` above `MAX_BODY_BYTES`, every request to `public/index.php`).
+- **Docker**: `docker/Dockerfile` builds a PHP-FPM image (Ubuntu 24.04, PHP 8.3) with every backend (libvips, cwebp, gif2webp, avifenc, Imagick, GD) that runs as uid 10001 with a read-only root filesystem, no capability and `no-new-privileges`; `docker/compose.yaml` runs it that way behind nginx. Under Docker's default seccomp profile bubblewrap cannot create its namespaces, so the conversions run with the `rlimit` isolation.
+- **Writable paths**: `TEMP_DIR`, `LOCK_DIR` and `CONVERTER_CACHE_DIR`. Use `LOCK_DIR=/run/image-conversion-api` (owned by the PHP user, mode 0700) rather than a directory under `/tmp`, which systemd-tmpfiles cleans up by age. Point `CONVERTER_CACHE_DIR` at a persistent writable volume when the root filesystem is read-only, or every process probes the backends again (1 to 13 seconds per request). Install `ext-posix`: without it the library keeps no such cache at all.
+- **Sizing**, for `CONCURRENCY_SLOTS` conversions at once: memory at least `CONCURRENCY_SLOTS` x 2 GiB; `TEMP_DIR` at least `CONCURRENCY_SLOTS` x (`MAX_BODY_BYTES` + 256 MiB); PHP's `post_max_size` and `upload_max_filesize` at least `MAX_BODY_BYTES` and `MAX_IMAGE_BYTES`; the web server's and PHP-FPM's timeouts above `CONVERSION_TIME_LIMIT`.
+- **Production `php.ini`**: `display_errors=Off`. The API turns it off itself as soon as it runs, but an error PHP raises before (a body above `post_max_size`) follows `php.ini`.
+- `composer check-env` validates the configuration and the host.
+
 ## Upgrading from 1.x
 
 > Draft notes of the 2.0 development branch; the full UPGRADING guide comes with the web server configuration.
 
-- **process.php is gone.** The front controller is `public/index.php`. Point the document root at `public/` (its `.htaccess` hands every request to `index.php` and passes the `Authorization` header to PHP-FPM). Where the installation directory itself is served, as 1.x was installed (`https://example.com/webp-converter/`), the new root `.htaccess` hands every request to `public/index.php`, serves no file of the installation, and keeps the routes below that prefix (`/webp-converter/v2/convert`). Both need `mod_rewrite` and `AllowOverride FileInfo`.
+- **process.php is gone.** The front controller is `public/index.php`. Point the document root at `public/` (its `.htaccess` hands every request to `index.php` and passes the `Authorization` header to PHP-FPM). Where the installation directory itself is served, as 1.x was installed (`https://example.com/webp-converter/`), the new root `.htaccess` hands every request to `public/index.php`, serves no file of the installation, and keeps the routes below that prefix (`/webp-converter/v2/convert`). Both need `mod_rewrite` and `AllowOverride FileInfo`. For nginx, see `deploy/nginx/`.
 - **The 1.x URL moved.** `https://example.com/<SCRIPT_NAME>` is now `https://example.com/v1/<V1_SCRIPT_NAME>`: point 1.x clients at the new path, and rename the `.env` key `SCRIPT_NAME` to `V1_SCRIPT_NAME` (see `.env.example`). The endpoint is deprecated (see above).
 - **Configuration** is read from environment variables first (`env[KEY]` in a PHP-FPM pool, `SetEnv` in Apache, `environment:` in Docker), then from the optional `.env` file at the root of the installation. Its comments now start with `#` (the `;` comments of a 1.x file are still skipped), and a value with spaces must be quoted. `composer check-env` (`bin/image-conversion-api check-env`) validates the configuration and the host: API key, directories, backends and isolation, `php.ini` limits; `composer install` runs it with `--informational`, which never fails.
 

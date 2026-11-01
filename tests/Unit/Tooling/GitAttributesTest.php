@@ -56,7 +56,9 @@ final class GitAttributesTest extends TestCase
     public static function developmentOnlyPaths(): array
     {
         $paths = [
+            '/.dockerignore',
             '/.github',
+            '/docker',
             '/tests',
             '/tools',
             '/.editorconfig',

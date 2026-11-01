@@ -1,0 +1,9 @@
+# Build context of docker/Dockerfile: only what the image copies.
+*
+!composer.json
+!.env.example
+!bin/
+!public/
+!src/
+!docker/php-fpm.conf
+!docker/php.ini

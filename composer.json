@@ -34,7 +34,8 @@
     "symfony/string": "<5.4.35 || >=6.0,<6.4.3 || >=7.0,<7.0.3"
   },
   "suggest": {
-    "ext-apcu": "Keeps the per-key rate limit counters in shared memory (RATE_LIMIT_STORE=auto or apcu) instead of files in LOCK_DIR."
+    "ext-apcu": "Keeps the per-key rate limit counters in shared memory (RATE_LIMIT_STORE=auto or apcu) instead of files in LOCK_DIR.",
+    "ext-posix": "Lets the conversion library keep its capability and isolation caches (CONVERTER_CACHE_DIR); without it every request probes the backends again."
   },
   "autoload": {
     "psr-4": {

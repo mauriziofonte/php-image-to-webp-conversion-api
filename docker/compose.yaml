@@ -1,0 +1,87 @@
+# Example deployment: the API in its hardened PHP-FPM container ("app")
+# behind nginx ("web") with the configuration of deploy/nginx. From the root
+# of the repository:
+#
+#   export API_KEYS="$(openssl rand -hex 32)"
+#   mkdir -p docker/tls   # the certificate and key of images-api.example.com
+#   docker compose -f docker/compose.yaml up --build -d
+#
+# Adapt server_name and the certificate paths in
+# deploy/nginx/image-conversion-api.conf, and the variables below (every key
+# of .env.example can be set in "environment").
+#
+# Sizing, for CONCURRENCY_SLOTS conversions at once (default 4):
+# - memory: at least CONCURRENCY_SLOTS x 2 GiB (mem_limit), since each
+#   conversion may use up to the library's per-process limit;
+# - TEMP_DIR (/tmp): at least CONCURRENCY_SLOTS x (MAX_BODY_BYTES + 256 MiB)
+#   for the uploads, the decoded frames and the outputs. A tmpfs counts
+#   against the memory limit: use a volume instead when that is too much.
+
+name: image-conversion-api
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ${IMAGE_CONVERSION_API_IMAGE:-image-conversion-api:local}
+    restart: unless-stopped
+    # Hardened runtime: non-root, read-only root filesystem, no capability,
+    # no privilege escalation. bubblewrap cannot create user namespaces
+    # under Docker's default seccomp profile, so the conversions run with
+    # the "rlimit" isolation (prlimit): /healthz with a key shows the level.
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      API_KEYS: ${API_KEYS:?set API_KEYS, at least 16 bytes per key}
+      METRICS_KEYS: ${METRICS_KEYS:-}
+      # The deprecated 1.x endpoint, /v1/<V1_SCRIPT_NAME>; empty: none.
+      V1_SCRIPT_NAME: ${V1_SCRIPT_NAME:-}
+      CONCURRENCY_SLOTS: "4"
+      # These match the image's defaults; kept here to show what is mounted.
+      TEMP_DIR: /tmp
+      LOCK_DIR: /run/image-conversion-api
+      CONVERTER_CACHE_DIR: /var/cache/image-conversion-api
+      LOG_FILE: stderr
+    tmpfs:
+      # TEMP_DIR: the per-request directories (see the sizing above).
+      - /tmp:size=1200m,mode=1777
+      # LOCK_DIR: the conversion slots and the file stores, private to the
+      # user and never cleaned while the service runs.
+      - /run/image-conversion-api:size=16m,mode=0700,uid=10001,gid=10001
+    volumes:
+      # CONVERTER_CACHE_DIR: what the library probed (backends, isolation),
+      # kept across restarts; without it every process probes again, for
+      # seconds per request.
+      - converter-cache:/var/cache/image-conversion-api
+    mem_limit: 8g
+    pids_limit: 512
+
+  web:
+    image: nginx:1.29.8
+    restart: unless-stopped
+    depends_on:
+      - app
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, NET_BIND_SERVICE, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # Plain HTTP only redirects to HTTPS.
+      - "${HTTP_PUBLISH:-80}:80"
+      - "${HTTPS_PUBLISH:-443}:443"
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    volumes:
+      - ../deploy/nginx/image-conversion-api.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+      - ${TLS_DIR:-./tls}/images-api.example.com.pem:/etc/ssl/certs/images-api.example.com.pem:ro
+      - ${TLS_DIR:-./tls}/images-api.example.com.key:/etc/ssl/private/images-api.example.com.key:ro
+
+volumes:
+  converter-cache:
