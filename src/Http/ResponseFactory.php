@@ -72,6 +72,9 @@ final class ResponseFactory
      */
     public const ERROR_BODY_TOO_LARGE = 'body_too_large';
 
+    /** 429: the API key sent more requests than RATE_LIMIT allows; Retry-After says when to try again. */
+    public const ERROR_RATE_LIMITED = 'rate_limited';
+
     /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */

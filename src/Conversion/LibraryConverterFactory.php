@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Conversion;
 
+use Mfonte\ImageConversionApi\Limits\ConversionSlots;
 use Mfonte\SecureImageConverter\Contract\ConverterInterface;
 use Mfonte\SecureImageConverter\Contract\Exception\InvalidArgumentException;
 use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
@@ -30,6 +31,12 @@ use Mfonte\SecureImageConverter\Validation\Limits;
  *   isolation), and a sandboxed one dies with its parent (bubblewrap
  *   --die-with-parent), so a worker killed in spite of this does not leave
  *   them running for long.
+ *
+ * - Concurrency: with ConversionSlots, each conversion takes one of the
+ *   host's slots (the library's Semaphore) once the input passed its
+ *   checks, waiting at most CONCURRENCY_WAIT, then fails with
+ *   concurrency_limit (503 with Retry-After). The wait is part of the time
+ *   limit: the processing ceiling is what is left after it.
  *
  * The builder is built again for each request; IsolationDetector and the
  * backends' capability cache keep what they probe in files, so that costs
@@ -58,21 +65,29 @@ final class LibraryConverterFactory implements ConverterFactoryInterface
     private $options;
 
     /**
+     * @var ConversionSlots|null
+     */
+    private $slots;
+
+    /**
      * @param SecureConverterBuilder $builder the settings of every converter (backends, isolation policy, backend
-     *                                        options); its limits and converter options are replaced
+     *                                        options); its limits, semaphore and converter options are replaced
      * @param Limits                 $limits  the input limits of every converter
      * @param ConverterOptions|null  $options the converter options before the per-request working directory and
-     *                                        budget are applied; the library defaults when null
+     *                                        budget are applied, the slot wait included; the library defaults when
+     *                                        null
+     * @param ConversionSlots|null   $slots   the conversion slots of the host; none (no limit) when null
      */
-    public function __construct(SecureConverterBuilder $builder, Limits $limits, ?ConverterOptions $options = null)
+    public function __construct(SecureConverterBuilder $builder, Limits $limits, ?ConverterOptions $options = null, ?ConversionSlots $slots = null)
     {
         $this->builder = $builder->withLimits($limits);
         $this->limits = $limits;
         $this->options = $options ?? new ConverterOptions();
+        $this->slots = $slots;
     }
 
     /**
-     * @throws InvalidArgumentException when the working directory does not exist
+     * @throws InvalidArgumentException when the working directory does not exist, or LOCK_DIR is not usable
      */
     public function create(string $workingDirectory, float $timeLimitSeconds): ConverterInterface
     {
@@ -82,7 +97,8 @@ final class LibraryConverterFactory implements ConverterFactoryInterface
         }
 
         return $this->builder
-            ->withConverterOptions($this->options($directory, $timeLimitSeconds))
+            ->withSemaphore($this->slots !== null ? $this->slots->semaphore() : null)
+            ->withConverterOptions($this->options($directory, $timeLimitSeconds, $this->slots !== null))
             ->build();
     }
 
@@ -92,15 +108,23 @@ final class LibraryConverterFactory implements ConverterFactoryInterface
     }
 
     /**
-     * The converter options of one request.
+     * The converter options of one request: the slot wait, when the
+     * converter takes a slot, then the processing ceiling share the time
+     * limit.
      */
-    private function options(string $directory, float $timeLimitSeconds): ConverterOptions
+    private function options(string $directory, float $timeLimitSeconds, bool $takesSlot): ConverterOptions
     {
-        $budget = $this->options->getBudget();
+        $options = $this->options;
+        if ($takesSlot) {
+            $wait = min($options->getSlotWaitSeconds(), max(0.0, $timeLimitSeconds - self::MIN_CEILING_SECONDS));
+            $options = $options->withSlotWaitSeconds($wait);
+            $timeLimitSeconds -= $wait;
+        }
+        $budget = $options->getBudget();
         $ceiling = max(self::MIN_CEILING_SECONDS, min($timeLimitSeconds, $budget->getMaxSeconds()));
         $budget = $budget->withMinSeconds(min($budget->getMinSeconds(), $ceiling))->withMaxSeconds($ceiling);
 
-        return $this->options
+        return $options
             ->withWorkingDirectoryParent($directory)
             ->withBudget($budget);
     }

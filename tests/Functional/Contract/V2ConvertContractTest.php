@@ -515,7 +515,8 @@ final class V2ConvertContractTest extends TestCase
      */
     private function send(ScriptedConverterFactory $factory, Request $request, array $config = []): Response
     {
-        $values = $config + ['TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY];
+        // Rate limiting is off here (LimitsTest covers it): its state would live in TEMP_DIR.
+        $values = $config + ['TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0'];
 
         return KernelFactory::create(Config::fromArray($values), $this->logger, $factory)->handle($request);
     }

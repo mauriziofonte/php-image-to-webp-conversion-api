@@ -245,7 +245,7 @@ final class AuthenticationTest extends TestCase
      */
     private function handle(string $method, string $path, array $server, array $config = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::KEY];
+        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::KEY, 'RATE_LIMIT' => '0'];
 
         return KernelFactory::create(Config::fromArray($values), $this->logger)
             ->handle(Request::create('https://api.example.test' . $path, $method, [], [], [], $server));

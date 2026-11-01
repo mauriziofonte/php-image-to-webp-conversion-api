@@ -197,6 +197,24 @@ final class ApiKeyAuthenticatorTest extends TestCase
         self::assertSame(ApiKeyAuthenticator::AUTHENTICATED, $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => self::KEY])));
     }
 
+    /**
+     * The identifier of a key is the same in every process and for every
+     * header shape, differs between keys, and does not contain the key.
+     */
+    public function testIdentifiesTheKeyForPerKeyLimits(): void
+    {
+        $bearer = self::authenticator()->clientId(self::request(['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]));
+        $header = (new ApiKeyAuthenticator([self::KEY]))->clientId(self::request(['HTTP_X_API_KEY' => self::KEY]));
+        $other = self::authenticator()->clientId(self::request(['HTTP_X_API_KEY' => self::NEXT_KEY]));
+
+        self::assertIsString($bearer);
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $bearer);
+        self::assertSame($bearer, $header);
+        self::assertNotSame($bearer, $other);
+        self::assertNotSame(substr(hash('sha256', self::KEY), 0, 32), $bearer, 'no plain digest of the key');
+        self::assertNull(self::authenticator()->clientId(self::request([])));
+    }
+
     private static function authenticator(): ApiKeyAuthenticator
     {
         return new ApiKeyAuthenticator([self::NEXT_KEY, self::KEY]);

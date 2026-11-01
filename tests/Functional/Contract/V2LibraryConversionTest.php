@@ -42,6 +42,11 @@ final class V2LibraryConversionTest extends TestCase
      */
     private $directory;
 
+    /**
+     * @var TemporaryDirectory|null
+     */
+    private $locks;
+
     protected function set_up(): void
     {
         parent::set_up();
@@ -52,12 +57,16 @@ final class V2LibraryConversionTest extends TestCase
             self::markTestSkipped('No backend of this host writes WEBP.');
         }
         $this->directory = new TemporaryDirectory();
+        $this->locks = new TemporaryDirectory();
     }
 
     protected function tear_down(): void
     {
         if ($this->directory !== null) {
             $this->directory->remove();
+        }
+        if ($this->locks !== null) {
+            $this->locks->remove();
         }
         parent::tear_down();
     }
@@ -94,8 +103,9 @@ final class V2LibraryConversionTest extends TestCase
     private function send(string $body, string $query): Response
     {
         self::assertNotNull($this->directory);
+        self::assertNotNull($this->locks);
         $kernel = KernelFactory::create(
-            Config::fromArray(['TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY]),
+            Config::fromArray(['TEMP_DIR' => $this->directory->path(), 'LOCK_DIR' => $this->locks->path('locks'), 'API_KEY' => self::API_KEY]),
             new MemoryLogger()
         );
 

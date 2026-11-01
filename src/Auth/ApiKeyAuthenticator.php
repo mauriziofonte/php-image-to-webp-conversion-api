@@ -69,6 +69,12 @@ final class ApiKeyAuthenticator
     private const KEY_HEADERS = ['X-API-Key', '-X-API-Key'];
 
     /**
+     * Prefixed to a key before it is hashed into a client identifier, so that
+     * the identifier is no plain SHA-256 of the key.
+     */
+    private const CLIENT_ID_CONTEXT = "image-conversion-api client\n";
+
+    /**
      * @var string
      */
     private $hmacKey;
@@ -124,6 +130,20 @@ final class ApiKeyAuthenticator
         }
 
         return $matched ? self::AUTHENTICATED : self::INVALID_KEY;
+    }
+
+    /**
+     * A stable identifier of the key the request presents, for per-key
+     * limits: 32 hexadecimal characters of a SHA-256 digest of the key,
+     * the same in every process, from which the key cannot be read back.
+     * Null when the request presents no key. Call it only for an
+     * AUTHENTICATED request, so that identifiers name configured keys only.
+     */
+    public function clientId(Request $request): ?string
+    {
+        $presented = self::presentedKey($request);
+
+        return $presented === null ? null : substr(hash('sha256', self::CLIENT_ID_CONTEXT . $presented), 0, 32);
     }
 
     /**

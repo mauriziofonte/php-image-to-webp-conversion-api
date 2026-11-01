@@ -148,7 +148,7 @@ final class HttpsEnforcementTest extends TestCase
      */
     private function handle(string $method, string $uri, array $server = [], array $config = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY];
+        $values = $config + ['V1_SCRIPT_NAME' => 'convert-now', 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0'];
         $server += ['HTTP_X_API_KEY' => self::API_KEY];
 
         return KernelFactory::create(Config::fromArray($values), new NullLogger())

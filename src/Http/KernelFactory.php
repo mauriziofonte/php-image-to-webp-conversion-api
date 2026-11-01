@@ -13,9 +13,16 @@ use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
 use Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler;
 use Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler;
+use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
+use Mfonte\ImageConversionApi\Limits\ConversionSlots;
+use Mfonte\ImageConversionApi\Limits\FileRateLimitStore;
+use Mfonte\ImageConversionApi\Limits\LimitingHandler;
+use Mfonte\ImageConversionApi\Limits\RateLimiter;
+use Mfonte\ImageConversionApi\Limits\RequestLimits;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
 use Mfonte\SecureImageConverter\Backend\BackendOptions;
+use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
 use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
 use Mfonte\SecureImageConverter\Validation\Limits;
 use Psr\Log\LoggerInterface;
@@ -31,14 +38,15 @@ use Psr\Log\LoggerInterface;
  * | Path                    | Methods   | Access    | Handler                         |
  * | ----------------------- | --------- | --------- | ------------------------------- |
  * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | 501 until API-5                 |
- * | /v2/convert             | POST      | protected | V2ConvertHandler                |
+ * | /v2/convert             | POST      | protected | V2ConvertHandler, limited       |
  * | /healthz                | GET, HEAD | public    | HealthHandler                   |
  * | /metrics                | GET, HEAD | protected | MetricsHandler                  |
  *
  * The /v1 route exists only when V1_SCRIPT_NAME is set. The conversion
- * endpoints convert with the library (LibraryConverterFactory, with the
- * library's default limits, backends and isolation policy) unless another
- * ConverterFactoryInterface is given.
+ * endpoints sit behind LimitingHandler (RATE_LIMIT, MAX_BODY_BYTES) and
+ * convert with the library (LibraryConverterFactory: MAX_IMAGE_BYTES,
+ * CONCURRENCY_SLOTS and CONCURRENCY_WAIT, the library's default backends
+ * and isolation policy) unless another ConverterFactoryInterface is given.
  */
 final class KernelFactory
 {
@@ -62,7 +70,9 @@ final class KernelFactory
         if ($converters === null) {
             $converters = new LibraryConverterFactory(
                 (new SecureConverterBuilder())->withBackendOptions((new BackendOptions())->withLogger($logger)),
-                new Limits()
+                (new Limits())->withMaxBytes($config->getMaxImageBytes()),
+                (new ConverterOptions())->withSlotWaitSeconds((float) $config->getConcurrencyWait()),
+                new ConversionSlots($config->getLockDirectory(), $config->getConcurrencySlots())
             );
         }
 
@@ -89,6 +99,22 @@ final class KernelFactory
     }
 
     /**
+     * The per-key rate limiter; null when RATE_LIMIT is 0.
+     */
+    private static function rateLimiter(Config $config): ?RateLimiter
+    {
+        if ($config->getRateLimit() === 0) {
+            return null;
+        }
+        $store = $config->getRateLimitStore();
+        if ($store === Config::RATE_LIMIT_STORE_APCU || ($store === Config::RATE_LIMIT_STORE_AUTO && ApcuRateLimitStore::isAvailable())) {
+            return new RateLimiter(new ApcuRateLimitStore(), $config->getRateLimit(), $config->getRateLimitBurst());
+        }
+
+        return new RateLimiter(new FileRateLimitStore($config->getLockDirectory()), $config->getRateLimit(), $config->getRateLimitBurst());
+    }
+
+    /**
      * @return list<Route>
      */
     private static function routes(Config $config, ResponseFactory $responses, ConverterFactoryInterface $converters, LoggerInterface $logger): array
@@ -103,8 +129,10 @@ final class KernelFactory
             $logger,
             $config->getConversionTimeLimit()
         );
+        $limits = new RequestLimits($config->getMaxBodyBytes());
+        $rateLimiter = self::rateLimiter($config);
         $routes = [
-            new Route('v2_convert', '/v2/convert', ['POST'], $v2),
+            new Route('v2_convert', '/v2/convert', ['POST'], new LimitingHandler($v2, $limits, $rateLimiter, $responses, $logger)),
             new Route('healthz', '/healthz', ['GET', 'HEAD'], new HealthHandler($responses), true),
             new Route('metrics', '/metrics', ['GET', 'HEAD'], new MetricsHandler($responses)),
         ];

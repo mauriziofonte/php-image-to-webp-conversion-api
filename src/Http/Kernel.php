@@ -24,7 +24,8 @@ use Symfony\Component\HttpFoundation\Response;
  *    so such clients cannot guess keys), without a key 401 missing_api_key,
  *    with another key 401 invalid_api_key. An unauthenticated client
  *    therefore cannot tell which paths exist, as in 1.x, which checked the
- *    key before the endpoint name;
+ *    key before the endpoint name. An accepted key is named in the request
+ *    attribute CLIENT_ATTRIBUTE, for the per-key limits;
  * 3. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
  * 4. the handler of the route runs with a temporary directory of its own,
@@ -43,6 +44,13 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class Kernel
 {
+    /**
+     * Request attribute that names the authenticated client, as
+     * ApiKeyAuthenticator::clientId() identifies its API key, for per-key
+     * limits; set before the handler of a protected route runs.
+     */
+    public const CLIENT_ATTRIBUTE = '_image_conversion_api_client';
+
     /**
      * @var Router
      */
@@ -158,6 +166,8 @@ final class Kernel
 
         switch ($this->authenticator->authenticate($request)) {
             case ApiKeyAuthenticator::AUTHENTICATED:
+                $request->attributes->set(self::CLIENT_ATTRIBUTE, $this->authenticator->clientId($request));
+
                 return null;
             case ApiKeyAuthenticator::MISSING_KEY:
                 return $this->responses->missingApiKey();

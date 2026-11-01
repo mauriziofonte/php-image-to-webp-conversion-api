@@ -243,7 +243,7 @@ final class KernelTest extends TestCase
      */
     private function handle(string $method, string $path, array $config = [], array $server = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY];
+        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0'];
         $kernel = KernelFactory::create(Config::fromArray($values), $this->logger);
         $server += ['HTTP_AUTHORIZATION' => 'Bearer ' . self::API_KEY];
 
