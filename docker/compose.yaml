@@ -11,11 +11,16 @@
 # of .env.example can be set in "environment").
 #
 # Sizing, for CONCURRENCY_SLOTS conversions at once (default 4):
-# - memory: at least CONCURRENCY_SLOTS x 2 GiB (mem_limit), since each
-#   conversion may use up to the library's per-process limit;
 # - TEMP_DIR (/tmp): at least CONCURRENCY_SLOTS x (MAX_BODY_BYTES + 256 MiB)
-#   for the uploads, the decoded frames and the outputs. A tmpfs counts
-#   against the memory limit: use a volume instead when that is too much.
+#   for the uploads, the decoded frames and the outputs;
+# - memory (mem_limit): the sum of
+#   - CONCURRENCY_SLOTS x 2 GiB, since each conversion may use up to the
+#     library's per-process limit,
+#   - pm.max_children x memory_limit for the PHP-FPM workers
+#     (docker/php-fpm.conf, docker/php.ini),
+#   - the size of the TEMP_DIR tmpfs, which counts against the memory
+#     limit as it fills (or mount a volume there instead).
+#   Here: 4 x 2048 MiB + 8 x 256 MiB + 1200 MiB = 11440 MiB, so 12g.
 
 name: image-conversion-api
 
@@ -60,7 +65,8 @@ services:
       # kept across restarts; without it every process probes again, for
       # seconds per request.
       - converter-cache:/var/cache/image-conversion-api
-    mem_limit: 8g
+    # See the sizing above: 4 x 2048 + 8 x 256 + 1200 MiB, rounded up.
+    mem_limit: 12g
     pids_limit: 512
 
   web:
