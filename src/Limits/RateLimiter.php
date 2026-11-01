@@ -18,9 +18,16 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  * and then pushes it one interval further; a refused request changes
  * nothing, so a client that keeps hammering does not lock itself out
  * beyond the refill. The wait it is told (Retry-After) is the time until
- * the next token, rounded up to whole seconds. A stored arrival time
- * more than (burst) intervals ahead of now, which only a clock that
- * stepped back produces, is clamped to that bound.
+ * the next token, rounded up to whole seconds.
+ *
+ * Clocks: the arrival time is never pulled back towards now. When the
+ * wall clock steps back by D, a key that spent its burst is refused for
+ * about D more seconds: the error is on the safe side, never more
+ * requests than the limit. Clamping it instead would let a client whose
+ * requests meet two clocks that disagree pass every request. For the
+ * same reason a store shared by several hosts (APCu is per host, but
+ * LOCK_DIR could be on a shared file system) needs their clocks
+ * synchronised (NTP); with clocks apart it stays safe but refuses more.
  */
 final class RateLimiter
 {
@@ -76,18 +83,11 @@ final class RateLimiter
         $tolerance = $this->tolerance;
         $wait = 0;
         $updated = $this->store->update($client, static function (?int $arrival) use ($now, $interval, $tolerance, &$wait): ?int {
-            // A stored arrival can never be legitimately further ahead than
-            // tolerance + interval; one that is (the wall clock stepped back,
-            // another host's clock in a shared store) is clamped, so that the
-            // key waits at most one interval instead of the size of the step.
-            $stored = $arrival;
-            $arrival = $arrival === null ? $now : min(max($arrival, $now), $now + $tolerance + $interval);
+            $arrival = $arrival === null ? $now : max($arrival, $now);
             if ($arrival - $now > $tolerance) {
                 $wait = $arrival - $now - $tolerance;
 
-                // A refused request changes nothing, but a clamped arrival is
-                // stored, so that the bound holds from now on.
-                return $arrival !== $stored ? $arrival : null;
+                return null;
             }
             $wait = 0;
 

@@ -8,6 +8,7 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
 use Mfonte\ImageConversionApi\Limits\RateLimiter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Limits\MemoryRateLimitStore;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 /**
@@ -85,9 +86,10 @@ final class RateLimiterTest extends TestCase
 
     /**
      * The wall clock steps back by an hour after the burst was spent: the
-     * key waits at most one interval more, not the hour.
+     * key is refused until the clock has caught up (the safe side), then
+     * counts again.
      */
-    public function testAClockThatStepsBackDoesNotLockTheKeyOut(): void
+    public function testAClockThatStepsBackDelaysTheKeyByTheStep(): void
     {
         $limiter = $this->limiter(new MemoryRateLimitStore(), 60, 3);
         for ($request = 0; $request < 3; ++$request) {
@@ -96,10 +98,47 @@ final class RateLimiterTest extends TestCase
 
         $this->now -= 3600000000;
 
-        self::assertSame(1, $limiter->consume('client'), 'one interval, not 3600 seconds');
-        $this->now += 1000000;
+        self::assertSame(3601, $limiter->consume('client'), 'the size of the step, plus the next token');
+        $this->now += 3601000000;
         self::assertSame(0, $limiter->consume('client'));
-        self::assertSame(1, $limiter->consume('client'), 'the bucket counts again from the new time');
+        self::assertSame(1, $limiter->consume('client'));
+    }
+
+    /**
+     * Requests that alternate between two clocks apart (two hosts on one
+     * store, or a clock stepping back and forth) get no more than the
+     * limit: 60 per minute with a burst of 3, one request every 100 ms
+     * for 60 s.
+     *
+     * @dataProvider provideClockSkews
+     */
+    #[DataProvider('provideClockSkews')]
+    public function testClocksThatDisagreeDoNotLetMoreThroughThanTheLimit(int $skew, int $period): void
+    {
+        $limiter = $this->limiter(new MemoryRateLimitStore(), 60, 3);
+        $real = $this->now;
+
+        $allowed = 0;
+        for ($request = 0; $request < 600; ++$request) {
+            $real += 100000;
+            $this->now = intdiv($request, $period) % 2 === 1 ? $real - $skew : $real;
+            $allowed += $limiter->consume('client') === 0 ? 1 : 0;
+        }
+
+        self::assertLessThanOrEqual(63, $allowed, 'the burst plus one per second');
+        self::assertGreaterThanOrEqual(1, $allowed);
+    }
+
+    /**
+     * @return array<string, array{int, int}>
+     */
+    public static function provideClockSkews(): array
+    {
+        return [
+            'two clocks 2 s apart, alternating' => [2000000, 1],
+            'two clocks 10 s apart, alternating' => [10000000, 1],
+            'one hour back and forward every second' => [3600000000, 10],
+        ];
     }
 
     public function testThrowsWhenTheStoreFails(): void
