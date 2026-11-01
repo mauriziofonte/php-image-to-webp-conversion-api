@@ -79,7 +79,11 @@ final class LimitingHandler implements RequestHandlerInterface
             try {
                 $wait = $this->rateLimiter->consume($client);
             } catch (RuntimeException $exception) {
-                $this->logger->error('The rate limit store failed', ['error_code' => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE, 'reason' => $exception->getMessage()]);
+                $this->logger->error('The rate limit store failed: {reason}', [
+                    'error_code' => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE,
+                    'reason' => $exception->getMessage(),
+                    'exception' => $exception,
+                ]);
 
                 return $this->responses->error(
                     503,

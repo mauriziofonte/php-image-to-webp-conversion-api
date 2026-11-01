@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Limits;
 
 use Mfonte\ImageConversionApi\Exception\RuntimeException;
+use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as LibraryException;
 
 /**
  * A token bucket per API key: RATE_LIMIT requests per minute on average,
@@ -71,8 +72,10 @@ final class RateLimiter
      *
      * @param string $client stable identifier of the client, 1 to 64 characters among [A-Za-z0-9_-]
      *
-     * @throws RuntimeException when the store cannot read and write the bucket atomically: the caller refuses the
-     *                          request (fail closed) as a server error, not as a client over its limit
+     * @throws RuntimeException when the store cannot read and write the bucket atomically, or is not usable (a
+     *                          LOCK_DIR that is not private, with the library's exception as the previous one):
+     *                          the caller refuses the request (fail closed) as a server error, not as a client
+     *                          over its limit
      *
      * @return int 0 when the request is allowed; otherwise the seconds to wait, at least 1
      */
@@ -82,7 +85,7 @@ final class RateLimiter
         $interval = $this->interval;
         $tolerance = $this->tolerance;
         $wait = 0;
-        $updated = $this->store->update($client, static function (?int $arrival) use ($now, $interval, $tolerance, &$wait): ?int {
+        $decide = static function (?int $arrival) use ($now, $interval, $tolerance, &$wait): ?int {
             $arrival = $arrival === null ? $now : max($arrival, $now);
             if ($arrival - $now > $tolerance) {
                 $wait = $arrival - $now - $tolerance;
@@ -92,7 +95,13 @@ final class RateLimiter
             $wait = 0;
 
             return $arrival + $interval;
-        });
+        };
+
+        try {
+            $updated = $this->store->update($client, $decide);
+        } catch (LibraryException $exception) {
+            throw new RuntimeException('The rate limit store is not usable: ' . $exception->getMessage(), 0, $exception);
+        }
         if (!$updated) {
             throw new RuntimeException('The rate limit store cannot update the bucket of the client.');
         }

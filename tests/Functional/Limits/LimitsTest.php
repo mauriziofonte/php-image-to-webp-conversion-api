@@ -7,16 +7,19 @@ namespace Mfonte\ImageConversionApi\Tests\Functional\Limits;
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
+use Mfonte\ImageConversionApi\Exception\RuntimeException;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
 use Mfonte\ImageConversionApi\Limits\LimitingHandler;
 use Mfonte\ImageConversionApi\Limits\RequestLimits;
+use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverterFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Log\MemoryLogger;
+use Mfonte\SecureImageConverter\Contract\Exception\InvalidArgumentException as LibraryInvalidArgumentException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -120,6 +123,48 @@ final class LimitsTest extends TestCase
         }));
         self::assertCount(1, $errors);
         self::assertSame(ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE, $errors[0]['context']['error_code'] ?? null);
+    }
+
+    /**
+     * A LOCK_DIR that other users may write to is refused by the library's
+     * LockDirectory: the rate limit cannot be checked, so the request is
+     * refused with 503, and the log keeps the reason and both exceptions.
+     */
+    public function testAnswers503WhenTheLockDirectoryIsNotPrivate(): void
+    {
+        $locks = $this->directory->path('shared-locks');
+        mkdir($locks);
+        chmod($locks, 0777);
+        $config = ['RATE_LIMIT' => '60', 'RATE_LIMIT_BURST' => '3', 'RATE_LIMIT_STORE' => 'file', 'LOCK_DIR' => $locks];
+        $converter = ScriptedConverter::succeeding('WEBP');
+
+        $response = $this->send($this->raw('IMAGE', self::KEY), $config, $converter);
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertSame(['error' => ['code' => 'rate_limit_unavailable', 'message' => 'The rate limit cannot be checked: retry later.']], json_decode((string) $response->getContent(), true));
+        self::assertSame([], $converter->getCalls());
+        $errors = array_values(array_filter($this->logger->getRecords(), static function (array $record): bool {
+            return $record['level'] === 'error';
+        }));
+        self::assertCount(1, $errors);
+        $context = $errors[0]['context'];
+        self::assertIsString($context['reason'] ?? null);
+        self::assertStringStartsWith('The rate limit store is not usable: ', $context['reason']);
+        $exception = $context['exception'] ?? null;
+        self::assertInstanceOf(RuntimeException::class, $exception);
+        self::assertInstanceOf(LibraryInvalidArgumentException::class, $exception->getPrevious());
+
+        // The production logger keeps the class and the message of both exceptions.
+        $lines = [];
+        (new ErrorLogLogger(static function (string $line) use (&$lines): bool {
+            $lines[] = $line;
+
+            return true;
+        }))->log('error', $errors[0]['message'], $context);
+        self::assertCount(1, $lines);
+        self::assertStringContainsString(json_encode(RuntimeException::class, JSON_UNESCAPED_SLASHES) ?: '-', $lines[0]);
+        self::assertStringContainsString(json_encode(LibraryInvalidArgumentException::class, JSON_UNESCAPED_SLASHES) ?: '-', $lines[0]);
+        self::assertStringContainsString('The rate limit store is not usable', $lines[0]);
     }
 
     public function testRateLimitingCanBeTurnedOff(): void
