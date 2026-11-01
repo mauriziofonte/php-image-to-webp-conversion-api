@@ -1,0 +1,30 @@
+# Apache configuration of the document root (public/). Every request is
+# handed to index.php, the front controller, which answers 404 to unknown
+# paths. Needs mod_rewrite and "AllowOverride FileInfo" (or All); without
+# mod_rewrite only /index.php itself would answer, so every request is
+# refused instead.
+
+Options -Indexes -MultiViews
+DirectoryIndex disabled
+
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # PHP-FPM behind mod_proxy_fcgi does not receive the Authorization
+    # header otherwise: the API key travels as "Authorization: Bearer".
+    RewriteCond %{HTTP:Authorization} .+
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%0]
+
+    RewriteRule .* index.php [END]
+</IfModule>
+
+# httpoxy: a "Proxy" request header must not become HTTP_PROXY. The
+# security headers come from PHP (a "Header always set" here would send
+# them twice behind PHP-FPM).
+<IfModule mod_headers.c>
+    RequestHeader unset Proxy
+</IfModule>

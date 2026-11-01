@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 use Mfonte\ImageConversionApi\Config\ConfigLoader;
 use Mfonte\ImageConversionApi\Http\FrontController;
+use Mfonte\ImageConversionApi\Http\InstallationBase;
 use Symfony\Component\HttpFoundation\Request;
 
 // Before the autoloader runs: PHP errors must never reach a response body.
@@ -21,6 +22,8 @@ ini_set('display_errors', '0');
 require dirname(__DIR__) . '/vendor/autoload.php';
 
 $request = Request::createFromGlobals();
+// Installed in a subdirectory served by Apache: see the root .htaccess.
+InstallationBase::apply($request);
 $documentRoot = $request->server->get('DOCUMENT_ROOT');
 
 (new FrontController(
