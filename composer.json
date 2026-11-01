@@ -17,6 +17,8 @@
   ],
   "require": {
     "php": "^7.2.5 || ^8.0",
+    "ext-filter": "*",
+    "ext-hash": "*",
     "ext-json": "*",
     "mfonte/secure-image-converter": "dev-claude/project-thread-79fchb as 1.0.0",
     "psr/log": "^1.1 || ^2.0 || ^3.0",
