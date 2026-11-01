@@ -2,9 +2,13 @@
 # behind nginx ("web") with the configuration of deploy/nginx. From the root
 # of the repository:
 #
-#   export API_KEYS="$(openssl rand -hex 32)"
+#   KEY="$(openssl rand -hex 32)"   # give it to the clients
+#   export API_KEYS="sha256:$(printf '%s' "$KEY" | sha256sum | cut -d ' ' -f 1)"
 #   mkdir -p docker/tls   # the certificate and key of images-api.example.com
 #   docker compose -f docker/compose.yaml up --build -d
+#
+# API_KEYS and METRICS_KEYS take the keys' SHA-256 digests, so that the
+# container's environment holds no key (see the isolation below).
 #
 # Adapt server_name and the certificate paths in
 # deploy/nginx/image-conversion-api.conf, and the variables below (every key
@@ -35,13 +39,27 @@ services:
     # no privilege escalation. bubblewrap cannot create user namespaces
     # under Docker's default seccomp profile, so the conversions run with
     # the "rlimit" isolation (prlimit): /healthz with a key shows the level.
+    #
+    # What that means: a decoder that a hostile image takes over runs as
+    # uid 10001 next to PHP-FPM, in the same pid namespace and with the
+    # same network. It can read the memory of PHP-FPM (/proc/<pid>/mem,
+    # unless the host's Yama ptrace_scope is 1 or more): every variable
+    # below, and the keys of the requests the workers are serving. It can
+    # also read the files of the requests in progress (/tmp), LOCK_DIR and
+    # CONVERTER_CACHE_DIR, signal the workers, and reach whatever the
+    # container's network reaches. Give the keys as digests (API_KEYS
+    # above), keep the container on a network of its own, and for the
+    # "sandbox" isolation add
+    # docker/compose.sandbox.yaml, whose header lists what it loosens and
+    # what the host needs.
     user: "10001:10001"
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     environment:
-      API_KEYS: ${API_KEYS:?set API_KEYS, at least 16 bytes per key}
+      # Keys, or better their digests: sha256:<hex>, comma-separated.
+      API_KEYS: ${API_KEYS:?set API_KEYS, at least 16 bytes per key, or sha256:<hex> digests}
       METRICS_KEYS: ${METRICS_KEYS:-}
       # The deprecated 1.x endpoint, /v1/<V1_SCRIPT_NAME>; empty: none.
       V1_SCRIPT_NAME: ${V1_SCRIPT_NAME:-}

@@ -44,6 +44,9 @@
 #                           running Composer in the build
 #   COMPOSER_AUTH           image mode: handed to Composer in the build as the
 #                           "composer_auth" secret (a GitHub token)
+#   HARNESS_SANDBOX         image mode: 1 adds docker/compose.sandbox.yaml and
+#                           expects the "sandbox" isolation (the host must
+#                           meet its prerequisites; not on GitHub's runners)
 
 set -euo pipefail
 
@@ -122,7 +125,11 @@ built_image=""
 # Each compose file is used with an override that runs every image by the
 # local name resolve() found (see write_image_override).
 fpm_compose() { docker compose --project-name "$fpm_project" --file "$here/compose.yaml" --file "$workdir/fpm-images.yaml" "$@"; }
-image_compose() { docker compose --project-name "$image_project" --file "$root/docker/compose.yaml" --file "$workdir/image-images.yaml" "$@"; }
+image_files=(--file "$root/docker/compose.yaml")
+if [ "${HARNESS_SANDBOX:-0}" = 1 ]; then
+    image_files+=(--file "$root/docker/compose.sandbox.yaml")
+fi
+image_compose() { docker compose --project-name "$image_project" "${image_files[@]}" --file "$workdir/image-images.yaml" "$@"; }
 
 fpm_started=0
 image_started=0
@@ -332,9 +339,13 @@ run_fpm() {
 # --- image mode -------------------------------------------------------------
 
 run_image() {
-    local image https_port http_port app status id
-    # No rate limit: the security corpus alone sends some 450 requests.
-    export API_KEYS="$api_key" METRICS_KEYS="$metrics_key" V1_SCRIPT_NAME=convert-now RATE_LIMIT=0 TLS_DIR="$workdir/tls" \
+    local image https_port http_port app status id environment
+    # The keys as their digests, as recommended: the container's
+    # environment holds no key. No rate limit: the security corpus alone
+    # sends some 450 requests.
+    export API_KEYS="sha256:$(printf '%s' "$api_key" | sha256sum | cut -d ' ' -f 1)" \
+        METRICS_KEYS="sha256:$(printf '%s' "$metrics_key" | sha256sum | cut -d ' ' -f 1)" \
+        V1_SCRIPT_NAME=convert-now RATE_LIMIT=0 TLS_DIR="$workdir/tls" \
         HTTPS_PUBLISH="127.0.0.1:" HTTP_PUBLISH="127.0.0.1:"
 
     log "Images for the image mode"
@@ -373,15 +384,32 @@ run_image() {
     expect "runs as uid 10001" "$(image_compose exec -T app id -u)" 10001
     expect "read-only root filesystem" "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$app")" true
     expect "every capability dropped" "$(docker inspect --format '{{json .HostConfig.CapDrop}}' "$app")" '["ALL"]'
-    expect "no-new-privileges" "$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$app")" '["no-new-privileges:true"]'
+    docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$app" | grep -q '"no-new-privileges:true"' ||
+        die "no-new-privileges is not set"
+    pass "no-new-privileges"
     expect "no effective capability" "$(image_compose exec -T app awk '/^CapEff:/ { print $2 }' /proc/1/status)" 0000000000000000
     expect "NoNewPrivs set" "$(image_compose exec -T app awk '/^NoNewPrivs:/ { print $2 }' /proc/1/status)" 1
     if image_compose exec -T app sh -c 'touch /srv/image-conversion-api/probe' >/dev/null 2>&1; then
         die "the application directory is writable"
     fi
     pass "the application directory is read-only"
-    image_compose exec -T app php bin/image-conversion-api check-env || die "check-env fails in the container"
+    image_compose exec -T app php bin/image-conversion-api check-env >"$workdir/check-env.log" 2>&1 ||
+        { cat "$workdir/check-env.log"; die "check-env fails in the container"; }
     pass "check-env passes in the container"
+    environment="$(docker inspect --format '{{json .Config.Env}}' "$app")"
+    case "$environment" in
+        *'"API_KEYS=sha256:'*) ;;
+        *) die "API_KEYS is not a digest in the environment of the container" ;;
+    esac
+    case "$environment" in
+        *"$api_key"* | *"$metrics_key"*) die "a key is in the environment of the container" ;;
+    esac
+    pass "no key in the environment of the container (digests only)"
+    if [ "${HARNESS_SANDBOX:-0}" = 1 ]; then
+        expect "isolation with docker/compose.sandbox.yaml" "$(sed -n 's/.*Converter: isolation \([a-z]*\);.*/\1/p' "$workdir/check-env.log")" sandbox
+    else
+        expect "isolation of docker/compose.yaml" "$(sed -n 's/.*Converter: isolation \([a-z]*\);.*/\1/p' "$workdir/check-env.log")" rlimit
+    fi
 
     run_phpunit "image mode, docker/compose.yaml" \
         -e "ICA_INTEGRATION_IMAGE_URL=https://127.0.0.1:$https_port" \

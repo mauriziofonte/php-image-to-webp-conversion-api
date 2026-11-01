@@ -1,0 +1,35 @@
+# Opt-in override of docker/compose.yaml: the conversions run in the
+# library's "sandbox" isolation (bubblewrap: own user, pid, mount and
+# network namespaces) instead of "rlimit". Use it with:
+#
+#   docker compose -f docker/compose.yaml -f docker/compose.sandbox.yaml up -d
+#
+# then check that /healthz with a key (or "php bin/image-conversion-api
+# check-env" in the container) reports the isolation "sandbox".
+#
+# It loosens the container to let bubblewrap build its namespaces:
+# - seccomp-bwrap.json is Docker's default profile (moby/profiles,
+#   seccomp/default.json) plus one rule that allows clone, unshare, setns,
+#   mount, umount2 and pivot_root without CAP_SYS_ADMIN;
+# - systempaths=unconfined leaves /proc and /sys unmasked: the kernel
+#   mounts a new /proc (bwrap --proc) only where /proc is fully visible.
+#   The container still holds no capability and runs as uid 10001.
+#
+# Host prerequisites:
+# - unprivileged user namespaces: user.max_user_namespaces above 0, and
+#   kernel.unprivileged_userns_clone=1 where the kernel has it (Debian);
+# - AppArmor (Ubuntu, Debian): the docker-default profile denies mount,
+#   so add "apparmor=unconfined" (or a profile that allows bubblewrap's
+#   mounts and userns) below; on Ubuntu 23.10 and later also set
+#   kernel.apparmor_restrict_unprivileged_userns=0, or bubblewrap gets a
+#   user namespace without the rights to use it.
+# Without them the library falls back to "rlimit" and check-env says so.
+#
+# Refresh seccomp-bwrap.json when Docker's default profile changes.
+
+services:
+  app:
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-bwrap.json
+      - systempaths=unconfined
