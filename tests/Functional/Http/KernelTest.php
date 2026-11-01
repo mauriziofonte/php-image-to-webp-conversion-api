@@ -205,6 +205,48 @@ final class KernelTest extends TestCase
         self::assertSame(ResponseFactory::ERROR_MISSING_IMAGE, self::errorCode($malformed));
     }
 
+    /**
+     * Logs correlate with the proxy (risk L-20): the X-Request-Id it sends
+     * comes back in the response, refusals included; without one, or with
+     * one that is not acceptable, a new ID is generated.
+     */
+    public function testAnswersTheRequestIdTheProxySent(): void
+    {
+        $adopted = $this->handle('POST', '/v2/convert', [], ['HTTP_X_REQUEST_ID' => '0f8c2e4a-9b1d-4e7f-8a2b-3c4d5e6f7a8b']);
+        $refused = $this->handle('GET', '/metrics', [], ['HTTP_X_REQUEST_ID' => 'from-proxy-1', 'HTTP_AUTHORIZATION' => 'Bearer wrong-key-0123456789']);
+        $generated = $this->handle('GET', '/healthz');
+        $replaced = $this->handle('GET', '/healthz', [], ['HTTP_X_REQUEST_ID' => "two words\r\nX-Injected: 1"]);
+
+        self::assertSame('0f8c2e4a-9b1d-4e7f-8a2b-3c4d5e6f7a8b', $adopted->headers->get('X-Request-Id'));
+        self::assertSame(401, $refused->getStatusCode());
+        self::assertSame('from-proxy-1', $refused->headers->get('X-Request-Id'));
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', (string) $generated->headers->get('X-Request-Id'));
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', (string) $replaced->headers->get('X-Request-Id'));
+        self::assertNull($replaced->headers->get('X-Injected'));
+    }
+
+    /**
+     * One access entry per request: method, route name, status and
+     * duration, never the path (the /v1 path holds V1_SCRIPT_NAME).
+     */
+    public function testLogsOneAccessEntryPerRequest(): void
+    {
+        $this->handle('POST', '/v1/' . self::SCRIPT_NAME);
+        $this->handle('GET', '/missing');
+
+        $records = $this->logger->getRecords(true);
+        $access = array_values(array_filter($records, static function (array $record): bool {
+            return $record['message'] === Kernel::ACCESS_LOG_MESSAGE;
+        }));
+        self::assertCount(2, $access);
+        self::assertSame('info', $access[0]['level']);
+        self::assertSame(['method', 'route', 'status', 'duration_ms'], array_keys($access[0]['context']));
+        self::assertSame(['POST', 'v1', 400], [$access[0]['context']['method'], $access[0]['context']['route'], $access[0]['context']['status']]);
+        self::assertIsInt($access[0]['context']['duration_ms']);
+        self::assertSame(['GET', null, 404], [$access[1]['context']['method'], $access[1]['context']['route'], $access[1]['context']['status']]);
+        self::assertStringNotContainsString(self::SCRIPT_NAME, (string) json_encode($records));
+    }
+
     public function testRoutesThatWriteNoFileTouchNoDisk(): void
     {
         $this->handle('GET', '/healthz');

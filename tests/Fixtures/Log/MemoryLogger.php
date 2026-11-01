@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Tests\Fixtures\Log;
 
+use Mfonte\ImageConversionApi\Http\Kernel;
 use Psr\Log\AbstractLogger;
 
 /**
- * Keeps every log entry in memory, for assertions.
+ * Keeps every log entry in memory, for assertions. getRecords() leaves out
+ * the access entry the kernel writes at the end of every request
+ * (Kernel::ACCESS_LOG_MESSAGE) unless asked for it.
  */
 final class MemoryLogger extends AbstractLogger
 {
@@ -31,10 +34,18 @@ final class MemoryLogger extends AbstractLogger
     }
 
     /**
+     * @param bool $withAccessEntries whether to include the kernel's access entries
+     *
      * @return list<array{level: string, message: string, context: array<mixed>}>
      */
-    public function getRecords(): array
+    public function getRecords(bool $withAccessEntries = false): array
     {
-        return $this->records;
+        if ($withAccessEntries) {
+            return $this->records;
+        }
+
+        return array_values(array_filter($this->records, static function (array $record): bool {
+            return $record['message'] !== Kernel::ACCESS_LOG_MESSAGE;
+        }));
     }
 }

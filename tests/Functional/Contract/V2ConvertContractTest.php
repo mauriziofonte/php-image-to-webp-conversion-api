@@ -102,7 +102,7 @@ final class V2ConvertContractTest extends TestCase
         $converter = ScriptedConverter::succeeding(self::OUTPUT);
         $factory = new ScriptedConverterFactory($converter);
 
-        $response = $this->send($factory, $this->raw(self::INPUT));
+        $response = $this->send($factory, $this->raw(self::INPUT, ['HTTP_X_REQUEST_ID' => 'proxy-7f3a9c']));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame(self::OUTPUT, self::body($response));
@@ -123,6 +123,7 @@ final class V2ConvertContractTest extends TestCase
             'x-conversion-requested-format' => 'webp',
             'x-conversion-warnings' => '0',
             'x-conversion-width' => '640',
+            'x-request-id' => 'proxy-7f3a9c',
         ], self::headers($response));
 
         $calls = $converter->getCalls();

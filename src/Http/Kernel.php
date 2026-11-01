@@ -38,6 +38,13 @@ use Symfony\Component\HttpFoundation\Response;
  * (X-HTTP-Method-Override, _method) are ignored. A HEAD request gets the
  * headers of the response without its body.
  *
+ * Every response carries the request ID (RequestId: the X-Request-Id the
+ * client sent, such as the proxy's, or a new one) in X-Request-Id, and
+ * every request ends with one info entry in the log, "Request handled",
+ * with the method, the route name (null when no route matched: the path
+ * itself is never logged, since the /v1 path holds V1_SCRIPT_NAME), the
+ * status and the duration in milliseconds.
+ *
  * The kernel only builds the response: it never sends it, never exits and
  * reads nothing but the Request, so that tests and other front controllers
  * can drive it.
@@ -50,6 +57,11 @@ final class Kernel
      * limits; set before the handler of a protected route runs.
      */
     public const CLIENT_ATTRIBUTE = '_image_conversion_api_client';
+
+    /**
+     * Message of the access entry logged at the end of every request.
+     */
+    public const ACCESS_LOG_MESSAGE = 'Request handled';
 
     /**
      * @var Router
@@ -116,19 +128,28 @@ final class Kernel
 
     public function handle(Request $request): Response
     {
+        $startedAt = microtime(true);
+        $requestId = RequestId::of($request);
         $method = $request->getRealMethod();
-        $response = $this->dispatch($request, $method);
+        $route = $this->router->match($request->getPathInfo());
+        $response = $this->dispatch($request, $method, $route);
         if ($method === 'HEAD') {
             // null, not '': StreamedResponse and BinaryFileResponse refuse any other content.
             $response->setContent(null);
         }
+        $response->headers->set(RequestId::HEADER, $requestId);
+        $this->logger->info(self::ACCESS_LOG_MESSAGE, [
+            'method' => $method,
+            'route' => $route !== null ? $route->getName() : null,
+            'status' => $response->getStatusCode(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
 
         return $response;
     }
 
-    private function dispatch(Request $request, string $method): Response
+    private function dispatch(Request $request, string $method, ?Route $route): Response
     {
-        $route = $this->router->match($request->getPathInfo());
         if ($route === null || !$route->isPublic()) {
             $refusal = $this->refuseAccess($request);
             if ($refusal !== null) {

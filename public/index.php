@@ -11,6 +11,7 @@ declare(strict_types=1);
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
+use Mfonte\ImageConversionApi\Http\RequestId;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Symfony\Component\HttpFoundation\Request;
@@ -20,8 +21,8 @@ ini_set('display_errors', '0');
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$logger = new JsonLogger();
 $request = Request::createFromGlobals();
+$logger = new JsonLogger(null, 'debug', RequestId::of($request));
 $documentRoot = $request->server->get('DOCUMENT_ROOT');
 
 try {
