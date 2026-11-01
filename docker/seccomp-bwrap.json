@@ -1227,7 +1227,6 @@
         "clone",
         "mount",
         "pivot_root",
-        "setns",
         "umount2",
         "unshare"
       ],

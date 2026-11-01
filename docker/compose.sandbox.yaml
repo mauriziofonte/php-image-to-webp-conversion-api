@@ -9,8 +9,9 @@
 #
 # It loosens the container to let bubblewrap build its namespaces:
 # - seccomp-bwrap.json is Docker's default profile (moby/profiles,
-#   seccomp/default.json) plus one rule that allows clone, unshare, setns,
-#   mount, umount2 and pivot_root without CAP_SYS_ADMIN;
+#   seccomp/default.json) plus one rule that allows clone, unshare, mount,
+#   umount2 and pivot_root without CAP_SYS_ADMIN, each of which bubblewrap
+#   needs (setns it does not: the library joins no existing namespace);
 # - systempaths=unconfined leaves /proc and /sys unmasked: the kernel
 #   mounts a new /proc (bwrap --proc) only where /proc is fully visible.
 #   The container still holds no capability and runs as uid 10001.
