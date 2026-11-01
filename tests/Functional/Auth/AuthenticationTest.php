@@ -68,7 +68,7 @@ final class AuthenticationTest extends TestCase
     {
         return [
             'v2' => ['POST', '/v2/convert', 400],
-            'v1' => ['POST', '/v1/convert-now', 501],
+            'v1' => ['POST', '/v1/convert-now', 400],
             'metrics' => ['GET', '/metrics', 200],
             'unknown path' => ['GET', '/missing', 404],
             'wrong method' => ['GET', '/v2/convert', 405],

@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Tests\Functional\Http;
 
 use Mfonte\ImageConversionApi\Config\Config;
+use Mfonte\ImageConversionApi\Http\Handler\DeprecatedHandler;
 use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
-use Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
@@ -28,13 +28,13 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
  * @covers \Mfonte\ImageConversionApi\Http\KernelFactory
  * @covers \Mfonte\ImageConversionApi\Http\Handler\HealthHandler
  * @covers \Mfonte\ImageConversionApi\Http\Handler\MetricsHandler
- * @covers \Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler
+ * @covers \Mfonte\ImageConversionApi\Http\Handler\DeprecatedHandler
  */
 #[CoversClass(Kernel::class)]
 #[CoversClass(KernelFactory::class)]
 #[CoversClass(HealthHandler::class)]
 #[CoversClass(MetricsHandler::class)]
-#[CoversClass(NotImplementedHandler::class)]
+#[CoversClass(DeprecatedHandler::class)]
 final class KernelTest extends TestCase
 {
     private const SCRIPT_NAME = 'convert-now';
@@ -118,8 +118,11 @@ final class KernelTest extends TestCase
     {
         $response = $this->handle('POST', '/v1/' . self::SCRIPT_NAME);
 
-        self::assertSame(501, $response->getStatusCode());
-        self::assertSame(ResponseFactory::ERROR_NOT_IMPLEMENTED, self::errorCode($response));
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame('{"status":false,"version":"1.0.0","message":"No images uploaded."}', $response->getContent());
+        self::assertSame('@1793491200', $response->headers->get('Deprecation'));
+        self::assertSame('Mon, 01 Nov 2027 00:00:00 GMT', $response->headers->get('Sunset'));
+        self::assertSame('<' . KernelFactory::V1_DEPRECATION_NOTICE . '>; rel="deprecation"; type="text/html"', $response->headers->get('Link'));
         self::assertSame(404, $this->handle('POST', '/v1/another-name')->getStatusCode());
     }
 

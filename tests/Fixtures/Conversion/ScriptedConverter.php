@@ -14,7 +14,8 @@ use Mfonte\SecureImageConverter\Contract\IsolationLevel;
 /**
  * A converter whose outcome a test chooses: it writes fixed bytes to the
  * output and returns a result described by the test, or throws the
- * exception the test gave it. It records every call, with the input bytes
+ * exception the test gave it (for every input, or for the inputs that
+ * contain a needle). It records every call, with the input bytes
  * it was given, so that tests can check what the endpoint passed on.
  */
 final class ScriptedConverter implements ConverterInterface
@@ -35,6 +36,11 @@ final class ScriptedConverter implements ConverterInterface
     private $failure;
 
     /**
+     * @var string|null
+     */
+    private $needle;
+
+    /**
      * @var list<array{input: string, inputPath: string, outputPath: string, request: ConversionRequest}>
      */
     private $calls = [];
@@ -44,11 +50,12 @@ final class ScriptedConverter implements ConverterInterface
      * @param array<string, mixed> $result overrides of the result: format, width, height, frames, backend,
      *                                     duration, isolation, passthrough, warnings
      */
-    private function __construct(string $output, array $result, ?\Throwable $failure)
+    private function __construct(string $output, array $result, ?\Throwable $failure, ?string $needle = null)
     {
         $this->output = $output;
         $this->result = $result;
         $this->failure = $failure;
+        $this->needle = $needle;
     }
 
     /**
@@ -64,6 +71,17 @@ final class ScriptedConverter implements ConverterInterface
         return new self('', [], $failure);
     }
 
+    /**
+     * Succeeds as succeeding() does, but throws $failure for an input that
+     * contains $needle.
+     *
+     * @param array<string, mixed> $result see the constructor
+     */
+    public static function failingOn(string $needle, \Throwable $failure, string $output, array $result = []): self
+    {
+        return new self($output, $result, $failure, $needle);
+    }
+
     public function convert(string $inputPath, string $outputPath, ConversionRequest $request): ConversionResult
     {
         $this->calls[] = [
@@ -72,7 +90,7 @@ final class ScriptedConverter implements ConverterInterface
             'outputPath' => $outputPath,
             'request' => $request,
         ];
-        if ($this->failure !== null) {
+        if ($this->failure !== null && ($this->needle === null || strpos($this->calls[count($this->calls) - 1]['input'], $this->needle) !== false)) {
             throw $this->failure;
         }
         file_put_contents($outputPath, $this->output);

@@ -9,9 +9,10 @@ use Mfonte\ImageConversionApi\Auth\IpAllowlist;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Conversion\ConverterFactoryInterface;
 use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
+use Mfonte\ImageConversionApi\Http\Handler\DeprecatedHandler;
 use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\Handler\MetricsHandler;
-use Mfonte\ImageConversionApi\Http\Handler\NotImplementedHandler;
+use Mfonte\ImageConversionApi\Http\Handler\V1ConvertHandler;
 use Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler;
 use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
@@ -20,6 +21,8 @@ use Mfonte\ImageConversionApi\Limits\LimitingHandler;
 use Mfonte\ImageConversionApi\Limits\RateLimiter;
 use Mfonte\ImageConversionApi\Limits\RequestLimits;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
+use Mfonte\ImageConversionApi\Mapping\V1RequestMapper;
+use Mfonte\ImageConversionApi\Mapping\V1ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
 use Mfonte\SecureImageConverter\Backend\BackendOptions;
 use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
@@ -37,12 +40,14 @@ use Psr\Log\LoggerInterface;
  *
  * | Path                    | Methods   | Access    | Handler                         |
  * | ----------------------- | --------- | --------- | ------------------------------- |
- * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | 501 until API-5                 |
+ * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | V1ConvertHandler, limited       |
  * | /v2/convert             | POST      | protected | V2ConvertHandler, limited       |
  * | /healthz                | GET, HEAD | public    | HealthHandler                   |
  * | /metrics                | GET, HEAD | protected | MetricsHandler                  |
  *
- * The /v1 route exists only when V1_SCRIPT_NAME is set. The conversion
+ * The /v1 route exists only when V1_SCRIPT_NAME is set, and is deprecated:
+ * its responses carry Deprecation (V1_DEPRECATED_AT), Sunset (V1_SUNSET_AT)
+ * and a Link to V1_DEPRECATION_NOTICE. The conversion
  * endpoints sit behind LimitingHandler (RATE_LIMIT, MAX_BODY_BYTES) and
  * convert with the library (LibraryConverterFactory: MAX_IMAGE_BYTES,
  * CONCURRENCY_SLOTS and CONCURRENCY_WAIT, the library's default backends
@@ -55,6 +60,22 @@ final class KernelFactory
      * dead process is removed.
      */
     public const MIN_STALE_SECONDS = 3600;
+
+    /**
+     * Unix time of the deprecation of /v1: 2026-11-01T00:00:00Z, the 2.0.0
+     * release window.
+     */
+    public const V1_DEPRECATED_AT = 1793491200;
+
+    /**
+     * Unix time after which /v1 may be removed: 2027-11-01T00:00:00Z.
+     */
+    public const V1_SUNSET_AT = 1825027200;
+
+    /**
+     * The deprecation notice of /v1 in the README.
+     */
+    public const V1_DEPRECATION_NOTICE = 'https://github.com/mauriziofonte/php-image-to-webp-conversion-api#deprecated-the-1x-endpoint';
 
     private function __construct()
     {
@@ -119,7 +140,6 @@ final class KernelFactory
      */
     private static function routes(Config $config, ResponseFactory $responses, ConverterFactoryInterface $converters, LoggerInterface $logger): array
     {
-        $notImplemented = new NotImplementedHandler($responses);
         $v2 = new V2ConvertHandler(
             $converters,
             new InputReader(),
@@ -139,7 +159,21 @@ final class KernelFactory
 
         $v1ScriptName = $config->getV1ScriptName();
         if ($v1ScriptName !== null) {
-            $routes[] = new Route('v1', '/v1/' . $v1ScriptName, ['POST'], $notImplemented);
+            $v1 = new V1ConvertHandler(
+                $converters,
+                new V1RequestMapper(),
+                new V1ResponseFactory(),
+                new ErrorMapper(),
+                $logger,
+                $config->getConversionTimeLimit(),
+                $config->getV1MaxFiles()
+            );
+            $routes[] = new Route('v1', '/v1/' . $v1ScriptName, ['POST'], new DeprecatedHandler(
+                new LimitingHandler($v1, $limits, $rateLimiter, $responses, $logger),
+                self::V1_DEPRECATED_AT,
+                self::V1_SUNSET_AT,
+                self::V1_DEPRECATION_NOTICE
+            ));
         }
 
         return $routes;

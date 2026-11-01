@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Tests\Functional;
 
+use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Http\BuiltinServer;
 use PHPUnit\Framework\Attributes\CoversNothing;
@@ -61,7 +62,10 @@ final class FrontControllerTest extends TestCase
         self::assertSame('{"status":"ok"}', $health['body']);
         self::assertSame('application/json', $health['headers']['content-type'] ?? null);
 
-        self::assertSame(501, $server->request('POST', '/v1/convert-now', $https)['status']);
+        $v1 = $server->request('POST', '/v1/convert-now', $https);
+        self::assertSame(400, $v1['status']);
+        self::assertSame('{"status":false,"version":"1.0.0","message":"No images uploaded."}', $v1['body']);
+        self::assertSame('@' . KernelFactory::V1_DEPRECATED_AT, $v1['headers']['deprecation'] ?? null);
         self::assertSame(400, $server->request('POST', '/v2/convert', $https)['status']);
         self::assertSame(404, $server->request('GET', '/missing', $https)['status']);
         self::assertDoesNotMatchRegularExpression('/PHP (?:Fatal|Parse|Warning|Notice|Deprecated)/', $server->getOutput());

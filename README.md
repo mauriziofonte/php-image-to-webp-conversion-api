@@ -21,6 +21,17 @@ curl --fail -H "Authorization: Bearer $API_KEY" -H 'Content-Type: image/png' \
   'https://example.com/v2/convert?format=webp&width=1200'
 ```
 
+## Deprecated: the 1.x endpoint
+
+`POST /v1/{V1_SCRIPT_NAME}` keeps the 1.x request (`images[]`, `descriptors`, the `m` and `lossless` options) and the 1.x JSON document, base64 images included, for the clients of 1.x. It is **deprecated**: every response carries `Deprecation: @1793491200` (2026-11-01), `Sunset: Mon, 01 Nov 2027 00:00:00 GMT` and a `Link` to this section, and it may be removed after the sunset date. Move to `POST /v2/convert`, one image per request with the image as the response body.
+
+It now converts with the library and the limits of `/v2/convert`, which changes a few answers:
+
+- **Limits**: at most `V1_MAX_FILES` images (default 10; more is a `413`), each at most `MAX_IMAGE_BYTES`, the whole body at most `MAX_BODY_BYTES`, within `CONVERSION_TIME_LIMIT`, the rate limit and the conversion slots shared with `/v2/convert`. PHP's `max_file_uploads` must be at least `V1_MAX_FILES`: PHP drops the files above it without an error.
+- **Options**: `m` (0-6) and `lossless` keep their meaning; `pass`, `near_lossless`, `hint` and `jpeg_like` are accepted and ignored. The quality is cwebp's default, 75.
+- **WEBP only**: a file whose WEBP would not be smaller than the original fails with `"status": false` (1.x returned the larger WEBP), so the client keeps its original.
+- **Statuses**: a request refused as a whole keeps the 1.x body (`{"status": false, "version": "1.0.0", "message": "..."}`) with a status other than 200: `400` (no images, invalid descriptors), `413` (too many images) and `503` with `Retry-After` (no conversion slot, or no isolation). Authentication, HTTPS, rate limit (`429`) and body size (`413`) errors are answered before the endpoint, in the 2.x body `{"error": {"code", "message"}}`.
+
 ## Why Use This Microservice?
 
 Converting images to WEBP format often requires the `exec()` function to call the `cwebp` binary on a Linux machine. However, `exec()` is not always permitted on all hosting services (e.g., shared hosting), and it's a common practice to disable it on production websites for security reasons.
