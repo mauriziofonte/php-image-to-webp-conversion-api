@@ -32,6 +32,14 @@ It now converts with the library and the limits of `/v2/convert`, which changes 
 - **WEBP only**: a file whose WEBP would not be smaller than the original fails with `"status": false` (1.x returned the larger WEBP), so the client keeps its original.
 - **Statuses**: a request refused as a whole keeps the 1.x body (`{"status": false, "version": "1.0.0", "message": "..."}`) with a status other than 200: `400` (no images, invalid descriptors), `413` (too many images) and `503` with `Retry-After` (no conversion slot, or no isolation). Authentication, HTTPS, rate limit (`429`) and body size (`413`) errors are answered before the endpoint, in the 2.x body `{"error": {"code", "message"}}`.
 
+## Upgrading from 1.x
+
+> Draft notes of the 2.0 development branch; the full UPGRADING guide comes with the web server configuration.
+
+- **process.php is gone.** The front controller is `public/index.php`, and the web server's document root must be `public/`. The `.htaccess` at the repository root is the 1.x one: it still rewrites every request to the removed `process.php`, so a host whose document root is the repository root answers 404 to everything. Do not use it; the Apache and nginx configuration of 2.0 is not written yet.
+- **The 1.x URL moved.** `https://example.com/<SCRIPT_NAME>` is now `https://example.com/v1/<V1_SCRIPT_NAME>`: point 1.x clients at the new path, and rename the `.env` key `SCRIPT_NAME` to `V1_SCRIPT_NAME` (see `.env.example`). The endpoint is deprecated (see above).
+- **Configuration** is read from environment variables (`env[KEY]` in a PHP-FPM pool, `SetEnv` in Apache), not yet from a `.env` file.
+
 ## Why Use This Microservice?
 
 Converting images to WEBP format often requires the `exec()` function to call the `cwebp` binary on a Linux machine. However, `exec()` is not always permitted on all hosting services (e.g., shared hosting), and it's a common practice to disable it on production websites for security reasons.
