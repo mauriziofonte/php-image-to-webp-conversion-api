@@ -287,6 +287,42 @@ final class WebServerTest extends TestCase
     }
 
     /**
+     * A body above PHP's post_max_size (1M in the php.ini of the fpm mode,
+     * which displays every error) and below MAX_BODY_BYTES: PHP raises a
+     * warning before the API runs, which the shipped web server
+     * configurations keep out of the answer. The answer stays the API's
+     * own: the raw body is refused as no image (or too large), the
+     * multipart body as larger than post_max_size.
+     *
+     * @dataProvider provideTargets
+     */
+    #[DataProvider('provideTargets')]
+    public function testABodyAbovePostMaxSizeGetsTheApiAnswer(string $target): void
+    {
+        $key = ['X-API-Key' => self::apiKey()];
+        $bytes = str_repeat("\0", 2 * 1024 * 1024);
+        list($multipart, $type) = HttpClient::multipart([], [['field' => 'images[]', 'name' => 'a.png', 'type' => 'image/png', 'content' => $bytes]]);
+
+        $responses = [
+            'raw' => $this->send($target, 'POST', '/v2/convert', $key + ['Content-Type' => 'image/png'], $bytes),
+            'multipart' => $this->send($target, 'POST', '/v1/' . self::v1ScriptName(), $key + ['Content-Type' => $type], $multipart),
+        ];
+
+        foreach ($responses as $name => $response) {
+            self::assertDoesNotMatchRegularExpression(self::PHP_NOISE, $response['body'], $name);
+            self::assertStringStartsWith('application/json', ($response['headers']['content-type'] ?? [''])[0], $name . ': ' . $response['body']);
+            self::assertIsArray(json_decode($response['body'], true), $name);
+            self::assertLessThan(500, $response['status'], $name . ': ' . $response['body']);
+        }
+        self::assertContains($responses['raw']['status'], [413, 415], $responses['raw']['body']);
+        if ($target !== 'image') {
+            // Only the fpm mode lowers post_max_size; the image keeps 22M.
+            self::assertSame(413, $responses['multipart']['status'], $responses['multipart']['body']);
+            self::assertStringContainsString('"body_too_large"', $responses['multipart']['body']);
+        }
+    }
+
+    /**
      * @param array<string, string> $headers
      *
      * @return array{status: int, headers: array<string, list<string>>, body: string}

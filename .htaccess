@@ -11,6 +11,20 @@
 Options -Indexes -MultiViews
 DirectoryIndex disabled
 
+# PHP prints the errors it raises before the API runs (such as a body above
+# post_max_size) by its php.ini, which may display them: they would become
+# the body. Off for PHP-FPM (a FastCGI parameter) and for mod_php (which
+# then needs "AllowOverride Options" as well).
+<IfModule mod_env.c>
+    SetEnv PHP_ADMIN_VALUE "display_errors=Off"
+</IfModule>
+<IfModule mod_php.c>
+    php_flag display_errors off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag display_errors off
+</IfModule>
+
 <IfModule !mod_rewrite.c>
     Require all denied
 </IfModule>
