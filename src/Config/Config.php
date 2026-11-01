@@ -8,6 +8,7 @@ use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\IpRange;
+use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 
 /**
  * The configuration of the service, immutable and already validated.
@@ -59,6 +60,42 @@ use Mfonte\ImageConversionApi\Http\IpRange;
  *   proxy_read_timeout (60 s by default), Apache Timeout and ProxyTimeout
  *   (60 s), PHP-FPM request_terminate_timeout, and the timeout of the
  *   client (the proxy's API timeout). Default: 50.
+ * - MAX_BODY_BYTES: the largest request body accepted by the conversion
+ *   endpoints, in bytes. A larger Content-Length is refused with 413
+ *   body_too_large before the body is read, and so is a multipart body
+ *   larger than PHP's post_max_size (which PHP would otherwise drop
+ *   silently): set post_max_size and upload_max_filesize to at least this
+ *   value. A body without Content-Length (chunked) is read only up to
+ *   MAX_IMAGE_BYTES (raw bodies) or post_max_size (multipart bodies,
+ *   which PHP reads). Default: 22020096 (21 MiB).
+ * - MAX_IMAGE_BYTES: the largest image, in bytes (the library's max_bytes
+ *   limit), answered 413 file_too_large. Default: 20971520 (20 MiB).
+ * - V1_MAX_FILES: the most images one /v1 request may carry, 1 to 100;
+ *   more are refused with 413 too_many_files. Default: 10.
+ * - CONCURRENCY_SLOTS: the most conversions that run at the same time on
+ *   this host, 1 to 256, shared by every PHP process through lock files in
+ *   LOCK_DIR (the library's Semaphore). Default: 4.
+ * - CONCURRENCY_WAIT: the longest wait for a free slot, in whole seconds
+ *   from 0 (one attempt) to below CONVERSION_TIME_LIMIT; then the request
+ *   is answered 503 concurrency_limit with Retry-After. Default: 10, or
+ *   CONVERSION_TIME_LIMIT - 1 when that is shorter.
+ * - LOCK_DIR: absolute path of the directory of the lock files of the
+ *   concurrency slots and of the file-based rate limiter; private to the
+ *   PHP user (created with mode 0700, refused when others can write to it
+ *   or to a directory above it without the sticky bit), on a local
+ *   filesystem, and never cleaned while the service runs. Default:
+ *   TEMP_DIR/image-conversion-api.locks.
+ * - RATE_LIMIT: requests per minute that one API key may send to the
+ *   conversion endpoints, a token bucket refilled at that rate; 0 turns
+ *   rate limiting off. Above it, 429 rate_limited with Retry-After.
+ *   Default: 300.
+ * - RATE_LIMIT_BURST: the size of the bucket, the requests a key may send
+ *   at once after a pause, 1 to 1000000. Default: 50.
+ * - RATE_LIMIT_STORE: where the buckets are kept: apcu (shared memory of
+ *   one PHP-FPM master, needs ext-apcu), file (one file per key in
+ *   LOCK_DIR, locked with flock(), shared by every PHP process of the
+ *   host) or auto (apcu when APCu is enabled, otherwise file). Default:
+ *   auto.
  */
 final class Config
 {
@@ -74,7 +111,32 @@ final class Config
         'API_KEYS',
         'IP_ALLOWLIST',
         'CONVERSION_TIME_LIMIT',
+        'MAX_BODY_BYTES',
+        'MAX_IMAGE_BYTES',
+        'V1_MAX_FILES',
+        'CONCURRENCY_SLOTS',
+        'CONCURRENCY_WAIT',
+        'LOCK_DIR',
+        'RATE_LIMIT',
+        'RATE_LIMIT_BURST',
+        'RATE_LIMIT_STORE',
     ];
+
+    /** RATE_LIMIT_STORE: APCu when it is enabled, otherwise files. */
+    public const RATE_LIMIT_STORE_AUTO = 'auto';
+
+    /** RATE_LIMIT_STORE: APCu. */
+    public const RATE_LIMIT_STORE_APCU = 'apcu';
+
+    /** RATE_LIMIT_STORE: one file per key in LOCK_DIR. */
+    public const RATE_LIMIT_STORE_FILE = 'file';
+
+    /**
+     * Name of the default LOCK_DIR in TEMP_DIR. It does not start with
+     * RequestDirectories::PREFIX, so that removing stale request
+     * directories never touches it.
+     */
+    public const DEFAULT_LOCK_DIR_NAME = 'image-conversion-api.locks';
 
     /**
      * Default of CONVERSION_TIME_LIMIT, in seconds: below the 60-second
@@ -86,6 +148,25 @@ final class Config
      * Largest CONVERSION_TIME_LIMIT, in seconds.
      */
     public const MAX_CONVERSION_TIME_LIMIT = 3600;
+
+    public const DEFAULT_MAX_BODY_BYTES = 22020096;
+
+    public const DEFAULT_MAX_IMAGE_BYTES = 20971520;
+
+    /**
+     * Largest MAX_IMAGE_BYTES: 1 GiB.
+     */
+    public const MAX_IMAGE_BYTES = 1073741824;
+
+    public const DEFAULT_V1_MAX_FILES = 10;
+
+    public const DEFAULT_CONCURRENCY_SLOTS = 4;
+
+    public const DEFAULT_CONCURRENCY_WAIT = 10;
+
+    public const DEFAULT_RATE_LIMIT = 300;
+
+    public const DEFAULT_RATE_LIMIT_BURST = 50;
 
     private const BOOLEANS = [
         'true' => true,
@@ -132,6 +213,51 @@ final class Config
      * @var int
      */
     private $conversionTimeLimit = self::DEFAULT_CONVERSION_TIME_LIMIT;
+
+    /**
+     * @var int
+     */
+    private $maxBodyBytes = self::DEFAULT_MAX_BODY_BYTES;
+
+    /**
+     * @var int
+     */
+    private $maxImageBytes = self::DEFAULT_MAX_IMAGE_BYTES;
+
+    /**
+     * @var int
+     */
+    private $v1MaxFiles = self::DEFAULT_V1_MAX_FILES;
+
+    /**
+     * @var int
+     */
+    private $concurrencySlots = self::DEFAULT_CONCURRENCY_SLOTS;
+
+    /**
+     * @var int
+     */
+    private $concurrencyWait = self::DEFAULT_CONCURRENCY_WAIT;
+
+    /**
+     * @var string
+     */
+    private $lockDirectory = '';
+
+    /**
+     * @var int
+     */
+    private $rateLimit = self::DEFAULT_RATE_LIMIT;
+
+    /**
+     * @var int
+     */
+    private $rateLimitBurst = self::DEFAULT_RATE_LIMIT_BURST;
+
+    /**
+     * @var string
+     */
+    private $rateLimitStore = self::RATE_LIMIT_STORE_AUTO;
 
     private function __construct()
     {
@@ -242,6 +368,39 @@ final class Config
         if ($timeLimit !== null) {
             $config->conversionTimeLimit = $timeLimit;
         }
+        $config->maxBodyBytes = self::integer($values, 'MAX_BODY_BYTES', 1, PHP_INT_MAX, $errors) ?? $config->maxBodyBytes;
+        $config->maxImageBytes = self::integer($values, 'MAX_IMAGE_BYTES', 1, self::MAX_IMAGE_BYTES, $errors) ?? $config->maxImageBytes;
+        $config->v1MaxFiles = self::integer($values, 'V1_MAX_FILES', 1, 100, $errors) ?? $config->v1MaxFiles;
+        $config->concurrencySlots = self::integer($values, 'CONCURRENCY_SLOTS', 1, 256, $errors) ?? $config->concurrencySlots;
+        $wait = self::integer($values, 'CONCURRENCY_WAIT', 0, self::MAX_CONVERSION_TIME_LIMIT, $errors);
+        if ($wait === null) {
+            $config->concurrencyWait = min(self::DEFAULT_CONCURRENCY_WAIT, $config->conversionTimeLimit - 1);
+        } elseif ($wait >= $config->conversionTimeLimit) {
+            $errors[] = 'CONCURRENCY_WAIT must be shorter than CONVERSION_TIME_LIMIT, which includes it';
+        } else {
+            $config->concurrencyWait = $wait;
+        }
+        $config->rateLimit = self::integer($values, 'RATE_LIMIT', 0, 1000000, $errors) ?? $config->rateLimit;
+        $config->rateLimitBurst = self::integer($values, 'RATE_LIMIT_BURST', 1, 1000000, $errors) ?? $config->rateLimitBurst;
+        $store = self::value($values, 'RATE_LIMIT_STORE');
+        if ($store !== null) {
+            $store = strtolower($store);
+            if (!in_array($store, [self::RATE_LIMIT_STORE_AUTO, self::RATE_LIMIT_STORE_APCU, self::RATE_LIMIT_STORE_FILE], true)) {
+                $errors[] = 'RATE_LIMIT_STORE must be auto, apcu or file';
+            } elseif ($store === self::RATE_LIMIT_STORE_APCU && !ApcuRateLimitStore::isAvailable()) {
+                $errors[] = 'RATE_LIMIT_STORE is apcu, but APCu is not enabled in this PHP (apc.enabled, apc.enable_cli)';
+            } else {
+                $config->rateLimitStore = $store;
+            }
+        }
+
+        $lockDirectory = self::value($values, 'LOCK_DIR');
+        if ($lockDirectory === null) {
+            $lockDirectory = rtrim($temporaryDirectory, '/\\') . DIRECTORY_SEPARATOR . self::DEFAULT_LOCK_DIR_NAME;
+        } elseif (!self::isAbsolutePath($lockDirectory)) {
+            $errors[] = 'LOCK_DIR must be an absolute path';
+        }
+        $config->lockDirectory = $lockDirectory;
 
         if ($errors !== []) {
             throw new InvalidConfigurationException($errors);
@@ -316,6 +475,78 @@ final class Config
     }
 
     /**
+     * MAX_BODY_BYTES: the largest request body of a conversion endpoint, in bytes.
+     */
+    public function getMaxBodyBytes(): int
+    {
+        return $this->maxBodyBytes;
+    }
+
+    /**
+     * MAX_IMAGE_BYTES: the largest image, in bytes.
+     */
+    public function getMaxImageBytes(): int
+    {
+        return $this->maxImageBytes;
+    }
+
+    /**
+     * V1_MAX_FILES: the most images of one /v1 request.
+     */
+    public function getV1MaxFiles(): int
+    {
+        return $this->v1MaxFiles;
+    }
+
+    /**
+     * CONCURRENCY_SLOTS: the most conversions that run at once on the host.
+     */
+    public function getConcurrencySlots(): int
+    {
+        return $this->concurrencySlots;
+    }
+
+    /**
+     * CONCURRENCY_WAIT: the longest wait for a conversion slot, in seconds.
+     */
+    public function getConcurrencyWait(): int
+    {
+        return $this->concurrencyWait;
+    }
+
+    /**
+     * LOCK_DIR: the directory of the lock files and of the file-based rate limiter.
+     */
+    public function getLockDirectory(): string
+    {
+        return $this->lockDirectory;
+    }
+
+    /**
+     * RATE_LIMIT: requests per minute per API key; 0 when rate limiting is off.
+     */
+    public function getRateLimit(): int
+    {
+        return $this->rateLimit;
+    }
+
+    /**
+     * RATE_LIMIT_BURST: the size of the token bucket of each key.
+     */
+    public function getRateLimitBurst(): int
+    {
+        return $this->rateLimitBurst;
+    }
+
+    /**
+     * RATE_LIMIT_STORE: one of the RATE_LIMIT_STORE_* constants.
+     */
+    public function getRateLimitStore(): string
+    {
+        return $this->rateLimitStore;
+    }
+
+    /**
      * Reads a whole number from $min to $max written in decimal digits.
      *
      * @param array<string, string|null> $values
@@ -329,7 +560,7 @@ final class Config
         if ($value === null) {
             return null;
         }
-        if (preg_match('/\A[0-9]{1,10}\z/', $value) !== 1 || (int) $value < $min || (int) $value > $max) {
+        if (preg_match('/\A[0-9]{1,18}\z/', $value) !== 1 || (int) $value < $min || (int) $value > $max) {
             $errors[] = sprintf('%s must be a whole number from %d to %d', $key, $min, $max);
 
             return null;

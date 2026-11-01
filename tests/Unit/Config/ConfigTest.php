@@ -6,6 +6,7 @@ namespace Mfonte\ImageConversionApi\Tests\Unit\Config;
 
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
+use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -51,6 +52,94 @@ final class ConfigTest extends TestCase
         self::assertSame([], $config->getApiKeys());
         self::assertSame([], $config->getIpAllowlist());
         self::assertSame(Config::DEFAULT_CONVERSION_TIME_LIMIT, $config->getConversionTimeLimit());
+        self::assertSame(22020096, $config->getMaxBodyBytes());
+        self::assertSame(20971520, $config->getMaxImageBytes());
+        self::assertSame(10, $config->getV1MaxFiles());
+        self::assertSame(4, $config->getConcurrencySlots());
+        self::assertSame(10, $config->getConcurrencyWait());
+        self::assertSame(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'image-conversion-api.locks', $config->getLockDirectory());
+        self::assertSame(300, $config->getRateLimit());
+        self::assertSame(50, $config->getRateLimitBurst());
+        self::assertSame(Config::RATE_LIMIT_STORE_AUTO, $config->getRateLimitStore());
+    }
+
+    public function testReadsTheLimits(): void
+    {
+        $config = Config::fromArray([
+            'TEMP_DIR' => '/var/tmp/api/',
+            'CONVERSION_TIME_LIMIT' => '30',
+            'MAX_BODY_BYTES' => '5000000',
+            'MAX_IMAGE_BYTES' => '4000000',
+            'V1_MAX_FILES' => '100',
+            'CONCURRENCY_SLOTS' => '256',
+            'CONCURRENCY_WAIT' => '0',
+            'RATE_LIMIT' => '0',
+            'RATE_LIMIT_BURST' => '1',
+            'RATE_LIMIT_STORE' => 'FILE',
+        ]);
+
+        self::assertSame(5000000, $config->getMaxBodyBytes());
+        self::assertSame(4000000, $config->getMaxImageBytes());
+        self::assertSame(100, $config->getV1MaxFiles());
+        self::assertSame(256, $config->getConcurrencySlots());
+        self::assertSame(0, $config->getConcurrencyWait());
+        self::assertSame('/var/tmp/api' . DIRECTORY_SEPARATOR . 'image-conversion-api.locks', $config->getLockDirectory(), 'in TEMP_DIR by default');
+        self::assertSame(0, $config->getRateLimit());
+        self::assertSame(1, $config->getRateLimitBurst());
+        self::assertSame(Config::RATE_LIMIT_STORE_FILE, $config->getRateLimitStore());
+        self::assertSame('/run/api-locks', Config::fromArray(['LOCK_DIR' => '/run/api-locks'])->getLockDirectory());
+    }
+
+    public function testTheDefaultSlotWaitFitsAShortTimeLimit(): void
+    {
+        self::assertSame(4, Config::fromArray(['CONVERSION_TIME_LIMIT' => '5'])->getConcurrencyWait());
+        self::assertSame(0, Config::fromArray(['CONVERSION_TIME_LIMIT' => '1'])->getConcurrencyWait());
+    }
+
+    /**
+     * @return array<string, array{array<string, string>, string}>
+     */
+    public static function provideInvalidLimits(): array
+    {
+        return [
+            'body size zero' => [['MAX_BODY_BYTES' => '0'], 'MAX_BODY_BYTES must be a whole number'],
+            'image size with a unit' => [['MAX_IMAGE_BYTES' => '20M'], 'MAX_IMAGE_BYTES must be a whole number'],
+            'image size above 1 GiB' => [['MAX_IMAGE_BYTES' => '1073741825'], 'MAX_IMAGE_BYTES must be a whole number from 1 to 1073741824'],
+            'no v1 file' => [['V1_MAX_FILES' => '0'], 'V1_MAX_FILES must be a whole number from 1 to 100'],
+            'too many slots' => [['CONCURRENCY_SLOTS' => '257'], 'CONCURRENCY_SLOTS must be a whole number from 1 to 256'],
+            'wait as long as the time limit' => [['CONVERSION_TIME_LIMIT' => '20', 'CONCURRENCY_WAIT' => '20'], 'CONCURRENCY_WAIT must be shorter than CONVERSION_TIME_LIMIT'],
+            'relative lock directory' => [['LOCK_DIR' => 'locks'], 'LOCK_DIR must be an absolute path'],
+            'negative rate' => [['RATE_LIMIT' => '-1'], 'RATE_LIMIT must be a whole number from 0 to 1000000'],
+            'no burst' => [['RATE_LIMIT_BURST' => '0'], 'RATE_LIMIT_BURST must be a whole number from 1 to 1000000'],
+            'unknown store' => [['RATE_LIMIT_STORE' => 'redis'], 'RATE_LIMIT_STORE must be auto, apcu or file'],
+        ];
+    }
+
+    /**
+     * @dataProvider provideInvalidLimits
+     *
+     * @param array<string, string> $values
+     */
+    #[DataProvider('provideInvalidLimits')]
+    public function testRefusesInvalidLimits(array $values, string $error): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage($error);
+
+        Config::fromArray($values);
+    }
+
+    public function testRefusesTheApcuStoreWithoutApcu(): void
+    {
+        if (ApcuRateLimitStore::isAvailable()) {
+            self::assertSame(Config::RATE_LIMIT_STORE_APCU, Config::fromArray(['RATE_LIMIT_STORE' => 'apcu'])->getRateLimitStore());
+
+            return;
+        }
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('RATE_LIMIT_STORE is apcu, but APCu is not enabled');
+
+        Config::fromArray(['RATE_LIMIT_STORE' => 'apcu']);
     }
 
     /**
@@ -368,7 +457,7 @@ final class ConfigTest extends TestCase
         preg_match_all('/^;?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
         $values = parse_ini_file($example);
 
-        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT'], $matches[1]);
+        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT', 'MAX_BODY_BYTES', 'MAX_IMAGE_BYTES', 'V1_MAX_FILES', 'CONCURRENCY_SLOTS', 'CONCURRENCY_WAIT', 'LOCK_DIR', 'RATE_LIMIT', 'RATE_LIMIT_BURST', 'RATE_LIMIT_STORE'], $matches[1]);
         self::assertSame([], array_diff(Config::KEYS, $matches[1]));
         self::assertIsArray($values);
         self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys($values));
