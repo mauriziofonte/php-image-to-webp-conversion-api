@@ -11,6 +11,7 @@ use Mfonte\SecureImageConverter\Contract\Capabilities;
 use Mfonte\SecureImageConverter\Contract\Exception\IsolationUnavailableException;
 use Mfonte\SecureImageConverter\Contract\ImageFormat;
 use Mfonte\SecureImageConverter\Contract\IsolationLevel;
+use Mfonte\SecureImageConverter\Isolation\IsolationDetector;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Symfony\Component\Console\Tester\CommandTester;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
@@ -55,6 +56,11 @@ final class CheckEnvCommandTest extends TestCase
      */
     private $probes = 0;
 
+    /**
+     * @var list<string>
+     */
+    private $cachedLevels = [];
+
     protected function set_up(): void
     {
         parent::set_up();
@@ -69,6 +75,7 @@ final class CheckEnvCommandTest extends TestCase
         $this->extensions = ['posix'];
         $this->capabilities = self::capabilities(IsolationLevel::SANDBOX, [ImageFormat::WEBP]);
         $this->probes = 0;
+        $this->cachedLevels = [];
     }
 
     protected function tear_down(): void
@@ -274,6 +281,44 @@ final class CheckEnvCommandTest extends TestCase
         self::assertStringNotContainsString('configured as themselves', $output, 'with the sandbox');
     }
 
+    /**
+     * The library keeps a probed isolation level for an hour: after the
+     * seccomp profile or the host changed, the service keeps the old one.
+     */
+    public function testWarnsAboutAStaleCachedIsolationLevel(): void
+    {
+        $this->environment['CONVERTER_CACHE_DIR'] = $this->directory->path('cache');
+        $this->capabilities = self::capabilities(IsolationLevel::RLIMIT, [ImageFormat::WEBP]);
+        $this->cachedLevels = [IsolationLevel::SANDBOX, IsolationLevel::RLIMIT];
+
+        list($exitCode, $output) = $this->check();
+
+        self::assertSame(0, $exitCode, $output);
+        self::assertStringContainsString('holds the isolation level sandbox, probed under other conditions than now (rlimit)', $output);
+        self::assertStringContainsString('docker/compose.sandbox.yaml', $output);
+
+        $this->cachedLevels = [IsolationLevel::RLIMIT];
+        list(, $output) = $this->check();
+        self::assertStringNotContainsString('probed under other conditions', $output);
+    }
+
+    public function testReadsTheCachedIsolationLevels(): void
+    {
+        $cache = $this->directory->path('cache');
+        mkdir($cache);
+        $entry = static function (string $level, int $age, int $schema = 1): string {
+            return (string) json_encode(['schema' => $schema, 'key' => 'k', 'result' => ['level' => $level, 'reasons' => [], 'detected_at' => time() - $age]]);
+        };
+        file_put_contents($cache . '/isolation-0000000000000001.json', $entry(IsolationLevel::SANDBOX, 10));
+        file_put_contents($cache . '/isolation-0000000000000002.json', $entry(IsolationLevel::PROCESS, IsolationDetector::DEFAULT_CACHE_TTL_SECONDS + 1));
+        file_put_contents($cache . '/isolation-0000000000000003.json', $entry(IsolationLevel::NONE, 10, 2));
+        file_put_contents($cache . '/isolation-0000000000000004.json', 'not json');
+        file_put_contents($cache . '/capabilities-0000000000000005.json', $entry(IsolationLevel::RLIMIT, 10));
+
+        self::assertSame([IsolationLevel::SANDBOX], CheckEnvCommand::cachedIsolationLevels($cache));
+        self::assertSame([], CheckEnvCommand::cachedIsolationLevels($this->directory->path('missing')));
+    }
+
     public function testUnlimitedIniValuesPass(): void
     {
         $this->environment['V1_SCRIPT_NAME'] = 'convert-now';
@@ -319,6 +364,9 @@ final class CheckEnvCommandTest extends TestCase
             },
             function (string $name): string {
                 return $this->ini[$name] ?? '';
+            },
+            function (string $directory): array {
+                return $this->cachedLevels;
             }
         );
     }

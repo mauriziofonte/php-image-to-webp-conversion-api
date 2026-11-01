@@ -2,9 +2,17 @@
 # library's "sandbox" isolation (bubblewrap: own user, pid, mount and
 # network namespaces) instead of "rlimit". Use it with:
 #
+#   docker compose -f docker/compose.yaml down --volumes
 #   docker compose -f docker/compose.yaml -f docker/compose.sandbox.yaml up -d
 #
-# then check that /healthz with a key (or "php bin/image-conversion-api
+# "down --volumes" empties CONVERTER_CACHE_DIR (the converter-cache
+# volume, nothing else): the library keeps the isolation level it probed
+# there for an hour, whatever the seccomp profile is now. Do the same
+# when removing this override, or after changing the host prerequisites
+# below; otherwise conversions fail (500 conversion_failed) or keep the
+# old level until the entry expires. check-env warns about such an entry.
+#
+# Then check that /healthz with a key (or "php bin/image-conversion-api
 # check-env" in the container) reports the isolation "sandbox".
 #
 # It loosens the container to let bubblewrap build its namespaces:

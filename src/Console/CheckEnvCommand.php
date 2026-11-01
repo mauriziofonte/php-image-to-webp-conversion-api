@@ -14,6 +14,7 @@ use Mfonte\SecureImageConverter\Contract\Capabilities;
 use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as LibraryException;
 use Mfonte\SecureImageConverter\Contract\ImageFormat;
 use Mfonte\SecureImageConverter\Contract\IsolationLevel;
+use Mfonte\SecureImageConverter\Isolation\IsolationDetector;
 use Psr\Log\NullLogger;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Formatter\OutputFormatter;
@@ -36,7 +37,10 @@ use Symfony\Component\Console\Output\OutputInterface;
  *   themselves rather than as digests while the conversions run without
  *   the sandbox, which lets a conversion read them; the php.ini limits of
  *   this SAPI (post_max_size, upload_max_filesize, max_file_uploads)
- *   below the service's.
+ *   below the service's; an isolation level cached in CONVERTER_CACHE_DIR
+ *   that differs from the one probed now (the host or the container's
+ *   seccomp changed since: the service keeps the cached level until it
+ *   expires).
  *
  * It creates nothing: the directories are checked, not created, because
  * the command often runs as another user (root during "composer install")
@@ -86,20 +90,29 @@ final class CheckEnvCommand extends Command
     private $iniGet;
 
     /**
-     * @param ConfigLoader                          $loader          reads the environment and the .env file of the
-     *                                                               installation
-     * @param list<string>                          $webRoots        directories the web server serves files from
-     * @param (callable(Config): Capabilities)|null $capabilities    the capabilities of the converter the service
-     *                                                               builds; may throw the library's exceptions
-     * @param (callable(string): bool)|null         $extensionLoaded extension_loaded() by default
-     * @param (callable(string): string)|null       $iniGet          ini_get() by default
+     * @var callable(string): list<string>
+     */
+    private $cachedIsolationLevels;
+
+    /**
+     * @param ConfigLoader                          $loader                reads the environment and the .env file of the
+     *                                                                     installation
+     * @param list<string>                          $webRoots              directories the web server serves files from
+     * @param (callable(Config): Capabilities)|null $capabilities          the capabilities of the converter the service
+     *                                                                     builds; may throw the library's exceptions
+     * @param (callable(string): bool)|null         $extensionLoaded       extension_loaded() by default
+     * @param (callable(string): string)|null       $iniGet                ini_get() by default
+     * @param (callable(string): list<string>)|null $cachedIsolationLevels the unexpired isolation levels cached in a
+     *                                                                     CONVERTER_CACHE_DIR; cachedIsolationLevels()
+     *                                                                     by default
      */
     public function __construct(
         ConfigLoader $loader,
         array $webRoots,
         ?callable $capabilities = null,
         ?callable $extensionLoaded = null,
-        ?callable $iniGet = null
+        ?callable $iniGet = null,
+        ?callable $cachedIsolationLevels = null
     ) {
         $this->loader = $loader;
         $this->webRoots = $webRoots;
@@ -111,6 +124,9 @@ final class CheckEnvCommand extends Command
         };
         $this->iniGet = $iniGet ?? static function (string $name): string {
             return (string) ini_get($name);
+        };
+        $this->cachedIsolationLevels = $cachedIsolationLevels ?? static function (string $directory): array {
+            return self::cachedIsolationLevels($directory);
         };
         parent::__construct(self::NAME);
     }
@@ -259,6 +275,33 @@ final class CheckEnvCommand extends Command
     }
 
     /**
+     * The unexpired isolation levels that the library cached in $directory
+     * (its isolation-*.json files, schema 1: one per PHP SAPI and user),
+     * read without changing anything. A file this user cannot read, or of
+     * another schema, is left out.
+     *
+     * @return list<string>
+     */
+    public static function cachedIsolationLevels(string $directory): array
+    {
+        $levels = [];
+        foreach (glob($directory . '/isolation-*.json') ?: [] as $file) {
+            $contents = @file_get_contents($file, false, null, 0, 65536);
+            $data = is_string($contents) ? json_decode($contents, true) : null;
+            if (!is_array($data) || ($data['schema'] ?? null) !== 1 || !is_array($data['result'] ?? null)) {
+                continue;
+            }
+            $level = $data['result']['level'] ?? null;
+            $detectedAt = $data['result']['detected_at'] ?? null;
+            if (is_string($level) && is_int($detectedAt) && time() - $detectedAt < IsolationDetector::DEFAULT_CACHE_TTL_SECONDS) {
+                $levels[] = $level;
+            }
+        }
+
+        return $levels;
+    }
+
+    /**
      * @param list<string> $warnings
      */
     private function checkIni(Config $config, array &$warnings): void
@@ -319,6 +362,19 @@ final class CheckEnvCommand extends Command
         }
         if ($capabilities->getIsolationLevel() === IsolationLevel::NONE) {
             $warnings[] = 'The conversions run inside the PHP process, without isolation (proc_open is disabled): a decoder crash takes the worker down.';
+        }
+        $cache = $config->getConverterCacheDirectory();
+        if ($cache !== null) {
+            $stale = array_values(array_diff(array_unique(($this->cachedIsolationLevels)($cache)), [$capabilities->getIsolationLevel()]));
+            if ($stale !== []) {
+                $warnings[] = sprintf(
+                    'CONVERTER_CACHE_DIR %s holds the isolation level %s, probed under other conditions than now (%s): the service keeps using it for up to %d seconds, and its conversions may fail meanwhile. This happens after adding or removing docker/compose.sandbox.yaml, or changing the host: empty the directory (with Docker, recreate its volume) and restart PHP-FPM.',
+                    $cache,
+                    implode(', ', $stale),
+                    $capabilities->getIsolationLevel(),
+                    IsolationDetector::DEFAULT_CACHE_TTL_SECONDS
+                );
+            }
         }
         if ($capabilities->getIsolationLevel() !== IsolationLevel::SANDBOX) {
             $plain = array_filter(array_merge($config->getApiKeys(), $config->getMetricsKeys()), static function (string $key): bool {
