@@ -29,6 +29,10 @@ use Symfony\Component\HttpFoundation\Response;
  *    attribute CLIENT_ATTRIBUTE, for the per-key limits. A route that
  *    names its own authenticator (Route::getAuthenticator()) is checked
  *    against its keys instead;
+ *    A request to a public route that presents a key (/healthz with the
+ *    proxy's key) goes through the same checks, so that a wrong key is
+ *    answered 401 there too, and an accepted one is named in
+ *    CLIENT_ATTRIBUTE for the handler; without a key it is let through;
  * 3. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
  * 4. the handler of the route runs with a temporary directory of its own,
@@ -59,7 +63,8 @@ final class Kernel
     /**
      * Request attribute that names the authenticated client, as
      * ApiKeyAuthenticator::clientId() identifies its API key, for per-key
-     * limits; set before the handler of a protected route runs.
+     * limits; set before the handler of a protected route runs, and of a
+     * public route when the request presents an accepted key.
      */
     public const CLIENT_ATTRIBUTE = '_image_conversion_api_client';
 
@@ -169,7 +174,7 @@ final class Kernel
 
     private function dispatch(Request $request, string $method, ?Route $route): Response
     {
-        if ($route === null || !$route->isPublic()) {
+        if ($route === null || !$route->isPublic() || $this->authenticator->presentsKey($request)) {
             $refusal = $this->refuseAccess($request, $route !== null ? $route->getAuthenticator() : null);
             if ($refusal !== null) {
                 return $refusal;

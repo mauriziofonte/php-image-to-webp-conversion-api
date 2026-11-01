@@ -32,6 +32,12 @@ It now converts with the library and the limits of `/v2/convert`, which changes 
 - **WEBP only**: a file whose WEBP would not be smaller than the original fails with `"status": false` (1.x returned the larger WEBP), so the client keeps its original.
 - **Statuses**: a request refused as a whole keeps the 1.x body (`{"status": false, "version": "1.0.0", "message": "..."}`) with a status other than 200: `400` (no images, invalid descriptors), `413` (too many images) and `503` with `Retry-After` (no conversion slot, or no isolation). Authentication, HTTPS, rate limit (`429`) and body size (`413`) errors are answered before the endpoint, in the 2.x body `{"error": {"code", "message"}}`.
 
+## Health, metrics and logs
+
+- **`GET /healthz`** needs neither a key nor HTTPS and answers `{"status":"ok"}`, nothing else, for load balancers. With an API key (over HTTPS, from an allowed address) it adds `"capabilities"`, the converter's formats, backends, isolation level and limits in the library's `Capabilities::toArray()` schema, which the proxy's remote mode reads; it answers `503` `{"status":"unavailable","error":{...}}` when the converter cannot be built. A wrong key is a `401`.
+- **`GET /metrics`** is the Prometheus exposition (requests by route and status, conversions by outcome, durations). It needs an API key or one of `METRICS_KEYS`, which open `/metrics` only; the counters are kept in `METRICS_STORE` (APCu, or a file of `LOCK_DIR`).
+- **Logs** are JSON lines (`LOG_FILE`, `LOG_LEVEL`) with a `request_id`: the `X-Request-Id` the client sent (the proxy's), or a new one, which every response echoes. PHP errors are logged, never displayed.
+
 ## Upgrading from 1.x
 
 > Draft notes of the 2.0 development branch; the full UPGRADING guide comes with the web server configuration.

@@ -166,16 +166,17 @@ final class AuthenticationTest extends TestCase
     }
 
     /**
-     * /healthz is public: no key needed, and its answer does not change with
-     * the credentials or the configuration, so it reveals neither.
+     * /healthz is public: no key needed, and without one its answer does
+     * not change with the configuration, so it reveals none. A presented
+     * key is checked (HealthzContractTest covers the accepted one).
      */
     public function testHealthzNeedsNoKeyAndRevealsNothing(): void
     {
         $responses = [
             $this->handle('GET', '/healthz', []),
-            $this->handle('GET', '/healthz', ['HTTP_AUTHORIZATION' => 'Bearer wrong']),
-            $this->handle('GET', '/healthz', ['HTTP_AUTHORIZATION' => 'Bearer ' . self::KEY]),
+            $this->handle('GET', '/healthz', ['HTTP_X_API_KEY' => '']),
             $this->handle('GET', '/healthz', [], ['API_KEY' => null]),
+            $this->handle('GET', '/healthz', [], ['IP_ALLOWLIST' => '192.0.2.1']),
         ];
 
         foreach ($responses as $response) {
@@ -183,6 +184,10 @@ final class AuthenticationTest extends TestCase
             self::assertSame('{"status":"ok"}', $response->getContent());
             self::assertNull($response->headers->get('WWW-Authenticate'));
         }
+
+        $wrong = $this->handle('GET', '/healthz', ['HTTP_AUTHORIZATION' => 'Bearer wrong']);
+        self::assertSame(401, $wrong->getStatusCode());
+        self::assertSame(ResponseFactory::ERROR_INVALID_API_KEY, self::errorCode($wrong));
     }
 
     /**

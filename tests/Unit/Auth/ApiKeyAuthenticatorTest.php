@@ -123,6 +123,8 @@ final class ApiKeyAuthenticatorTest extends TestCase
     public function testRefusesMissingAndWrongKeys(array $server, string $outcome): void
     {
         self::assertSame($outcome, self::authenticator()->authenticate(self::request($server)));
+        self::assertSame($outcome !== ApiKeyAuthenticator::MISSING_KEY, self::authenticator()->presentsKey(self::request($server)));
+        self::assertSame($outcome !== ApiKeyAuthenticator::MISSING_KEY, (new ApiKeyAuthenticator([]))->presentsKey(self::request($server)), 'without a configured key');
     }
 
     public function testAcceptsEveryConfiguredKeyForRotation(): void

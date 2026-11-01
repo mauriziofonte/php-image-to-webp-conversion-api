@@ -44,6 +44,11 @@ final class KernelTest extends TestCase
     private const METRICS_KEY = 'kernel-scraper-key-0123456789';
 
     /**
+     * Server variables of a request without a key (handle() adds one).
+     */
+    private const NO_KEY = ['HTTP_AUTHORIZATION' => ''];
+
+    /**
      * @var TemporaryDirectory
      */
     private $directory;
@@ -68,7 +73,7 @@ final class KernelTest extends TestCase
 
     public function testHealthzAnswersAFixedStatus(): void
     {
-        $response = $this->handle('GET', '/healthz');
+        $response = $this->handle('GET', '/healthz', [], self::NO_KEY);
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('{"status":"ok"}', $response->getContent());
@@ -81,8 +86,8 @@ final class KernelTest extends TestCase
      */
     public function testHealthzRevealsNothingAboutTheConfiguration(): void
     {
-        $content = (string) $this->handle('GET', '/healthz')->getContent();
-        $headers = (string) $this->handle('GET', '/healthz')->headers;
+        $content = (string) $this->handle('GET', '/healthz', [], self::NO_KEY)->getContent();
+        $headers = (string) $this->handle('GET', '/healthz', [], self::NO_KEY)->headers;
 
         foreach ([self::SCRIPT_NAME, $this->directory->path()] as $secret) {
             self::assertStringNotContainsString($secret, $content);
@@ -92,7 +97,7 @@ final class KernelTest extends TestCase
 
     public function testHeadAnswersTheHeadersWithoutTheBody(): void
     {
-        $response = $this->handle('HEAD', '/healthz');
+        $response = $this->handle('HEAD', '/healthz', [], self::NO_KEY);
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('', (string) $response->getContent());
@@ -296,7 +301,7 @@ final class KernelTest extends TestCase
 
     public function testRoutesThatWriteNoFileTouchNoDisk(): void
     {
-        $this->handle('GET', '/healthz');
+        $this->handle('GET', '/healthz', [], self::NO_KEY);
         $this->handle('GET', '/metrics');
         $this->handle('GET', '/missing');
 

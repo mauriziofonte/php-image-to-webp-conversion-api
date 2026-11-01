@@ -48,8 +48,11 @@ use Psr\Log\LoggerInterface;
  * | ----------------------- | --------- | --------- | ------------------------------- |
  * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | V1ConvertHandler, limited       |
  * | /v2/convert             | POST      | protected | V2ConvertHandler, limited       |
- * | /healthz                | GET, HEAD | public    | HealthHandler                   |
+ * | /healthz                | GET, HEAD | public    | HealthHandler (+ capabilities)  |
  * | /metrics                | GET, HEAD | protected | MetricsHandler (+ METRICS_KEYS) |
+ *
+ * /healthz is public; with an accepted API key it also publishes the
+ * capabilities of the converter (HealthHandler).
  *
  * /metrics accepts the METRICS_KEYS besides the API keys, so that a
  * Prometheus scraper needs no key that converts images; IP_ALLOWLIST and
@@ -210,7 +213,7 @@ final class KernelFactory
         $rateLimiter = self::rateLimiter($config);
         $routes = [
             new Route('v2_convert', '/v2/convert', ['POST'], new LimitingHandler($v2, $limits, $rateLimiter, $responses, $logger)),
-            new Route('healthz', '/healthz', ['GET', 'HEAD'], new HealthHandler($responses), true),
+            new Route('healthz', '/healthz', ['GET', 'HEAD'], new HealthHandler($responses, $converters, new ErrorMapper(), $logger, $config->getConversionTimeLimit()), true),
             new Route(
                 'metrics',
                 '/metrics',

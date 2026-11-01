@@ -85,9 +85,14 @@ final class HttpsEnforcementTest extends TestCase
         self::assertSame('{"error":{"code":"https_required","message":"This endpoint must be called over HTTPS."}}', $response->getContent());
     }
 
-    public function testHealthzAnswersOverPlainHttp(): void
+    /**
+     * Without a key, /healthz answers over plain HTTP (load balancers); a
+     * key presented over plain HTTP is refused as on every protected path.
+     */
+    public function testHealthzAnswersOverPlainHttpWithoutAKey(): void
     {
-        self::assertSame(200, $this->handle('GET', 'http://api.example.test/healthz')->getStatusCode());
+        self::assertSame(200, $this->handle('GET', 'http://api.example.test/healthz', ['HTTP_X_API_KEY' => ''])->getStatusCode());
+        self::assertSame('https_required', self::errorCode($this->handle('GET', 'http://api.example.test/healthz')));
     }
 
     public function testHttpsIsAccepted(): void

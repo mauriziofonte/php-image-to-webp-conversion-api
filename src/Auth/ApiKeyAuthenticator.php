@@ -111,6 +111,15 @@ final class ApiKeyAuthenticator
     }
 
     /**
+     * Whether the request presents a key (X-API-Key or a Bearer
+     * Authorization), accepted or not.
+     */
+    public function presentsKey(Request $request): bool
+    {
+        return self::presentedKey($request) !== null;
+    }
+
+    /**
      * @return string one of AUTHENTICATED, NOT_CONFIGURED, MISSING_KEY and INVALID_KEY
      */
     public function authenticate(Request $request): string

@@ -29,10 +29,26 @@ final class ScriptedConverterFactory implements ConverterFactoryInterface
      */
     private $created = [];
 
+    /**
+     * @var \Throwable|null
+     */
+    private $createFailure;
+
     public function __construct(ConverterInterface $converter, int $maxInputBytes = 1048576)
     {
         $this->converter = $converter;
         $this->maxInputBytes = $maxInputBytes;
+    }
+
+    /**
+     * Makes create() throw $failure, as the library's builder does when the
+     * converter cannot be built.
+     */
+    public function failToCreate(\Throwable $failure): self
+    {
+        $this->createFailure = $failure;
+
+        return $this;
     }
 
     public function create(string $workingDirectory, float $timeLimitSeconds): ConverterInterface
@@ -42,6 +58,9 @@ final class ScriptedConverterFactory implements ConverterFactoryInterface
             'timeLimitSeconds' => $timeLimitSeconds,
             'existed' => is_dir($workingDirectory),
         ];
+        if ($this->createFailure !== null) {
+            throw $this->createFailure;
+        }
 
         return $this->converter;
     }

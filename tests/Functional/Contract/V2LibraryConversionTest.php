@@ -6,9 +6,11 @@ namespace Mfonte\ImageConversionApi\Tests\Functional\Contract;
 
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
+use Mfonte\ImageConversionApi\Http\Handler\HealthHandler;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Log\MemoryLogger;
+use Mfonte\SecureImageConverter\Contract\Capabilities;
 use Mfonte\SecureImageConverter\Contract\ImageFormat;
 use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -27,11 +29,13 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
  *
  * @covers \Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory
  * @covers \Mfonte\ImageConversionApi\Http\KernelFactory
+ * @covers \Mfonte\ImageConversionApi\Http\Handler\HealthHandler
  *
  * @group contract
  */
 #[CoversClass(LibraryConverterFactory::class)]
 #[CoversClass(KernelFactory::class)]
+#[CoversClass(HealthHandler::class)]
 #[Group('contract')]
 final class V2LibraryConversionTest extends TestCase
 {
@@ -116,6 +120,32 @@ final class V2LibraryConversionTest extends TestCase
         self::assertDirectoryExists($cache);
         self::assertSame(0700, fileperms($cache) & 0777);
         self::assertNotSame([], $this->locks->entries('converter-cache'), 'the library wrote its cache files');
+    }
+
+    /**
+     * /healthz with the key publishes the capabilities of the converter
+     * that /v2/convert uses, in the schema the proxy reads back.
+     */
+    public function testHealthzPublishesTheCapabilitiesOfTheLibrary(): void
+    {
+        self::assertNotNull($this->directory);
+        self::assertNotNull($this->locks);
+        $kernel = KernelFactory::create(
+            Config::fromArray(['TEMP_DIR' => $this->directory->path(), 'LOCK_DIR' => $this->locks->path('locks'), 'API_KEY' => self::API_KEY]),
+            new MemoryLogger()
+        );
+
+        $response = $kernel->handle(Request::create('https://api.example.test/healthz', 'GET', [], [], [], ['HTTP_X_API_KEY' => self::API_KEY]));
+
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+        $data = json_decode((string) $response->getContent(), true);
+        self::assertIsArray($data);
+        self::assertSame('ok', $data['status'] ?? null);
+        self::assertIsArray($data['capabilities'] ?? null);
+        $capabilities = Capabilities::fromArray($data['capabilities']);
+        self::assertTrue($capabilities->supportsOutput(ImageFormat::WEBP));
+        self::assertNotSame([], $capabilities->getBackends());
+        self::assertSame([], $this->directory->entries());
     }
 
     /**
