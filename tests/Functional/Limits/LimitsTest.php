@@ -24,7 +24,7 @@ use Mfonte\ImageConversionApi\Limits\RateLimiter;
 use Mfonte\ImageConversionApi\Limits\RequestLimits;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
-use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverterFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
@@ -178,7 +178,7 @@ final class LimitsTest extends TestCase
 
         // The production logger keeps the class and the message of both exceptions.
         $lines = [];
-        (new ErrorLogLogger(static function (string $line) use (&$lines): bool {
+        (new JsonLogger(static function (string $line) use (&$lines): bool {
             $lines[] = $line;
 
             return true;
@@ -296,7 +296,7 @@ final class LimitsTest extends TestCase
 
         // The production logger keeps the class and the message of both exceptions.
         $lines = [];
-        (new ErrorLogLogger(static function (string $line) use (&$lines): bool {
+        (new JsonLogger(static function (string $line) use (&$lines): bool {
             $lines[] = $line;
 
             return true;

@@ -12,7 +12,7 @@ use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
-use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Symfony\Component\HttpFoundation\Request;
 
 // PHP errors must never reach a response body.
@@ -20,7 +20,7 @@ ini_set('display_errors', '0');
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$logger = new ErrorLogLogger();
+$logger = new JsonLogger();
 $request = Request::createFromGlobals();
 $documentRoot = $request->server->get('DOCUMENT_ROOT');
 

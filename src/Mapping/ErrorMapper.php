@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Mapping;
 
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Mfonte\SecureImageConverter\Contract\ConversionRequest;
 use Mfonte\SecureImageConverter\Contract\Exception\ConcurrencyLimitException;
 use Mfonte\SecureImageConverter\Contract\Exception\ErrorCode;
@@ -47,7 +48,7 @@ final class ErrorMapper
      * The log context key of a library error code, shared with the proxy, which
      * logs the code the API answers under the same name.
      */
-    public const LOG_KEY = 'conversion_error_code';
+    public const LOG_KEY = JsonLogger::CONVERSION_ERROR_CODE;
 
     private const STATUSES = [
         ErrorCode::INVALID_REQUEST => 400,

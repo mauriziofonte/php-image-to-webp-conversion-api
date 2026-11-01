@@ -14,7 +14,7 @@ declare(strict_types=1);
 
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
-use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\CopyingConverter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverterFactory;
 use Symfony\Component\HttpFoundation\Request;
@@ -32,4 +32,4 @@ require dirname(__DIR__, 3) . '/vendor/autoload.php';
 
 $config = Config::fromEnvironment([dirname(__DIR__, 3) . '/public']);
 $converters = new ScriptedConverterFactory(new CopyingConverter(), $config->getMaxImageBytes());
-KernelFactory::create($config, new ErrorLogLogger(), $converters)->handle(Request::createFromGlobals())->send();
+KernelFactory::create($config, new JsonLogger(), $converters)->handle(Request::createFromGlobals())->send();

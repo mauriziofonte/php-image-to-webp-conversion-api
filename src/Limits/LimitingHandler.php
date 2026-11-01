@@ -10,6 +10,7 @@ use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
 use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -80,7 +81,7 @@ final class LimitingHandler implements RequestHandlerInterface
                 $wait = $this->rateLimiter->consume($client);
             } catch (RuntimeException $exception) {
                 $this->logger->error('The rate limit store failed: {reason}', [
-                    'error_code' => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE,
+                    JsonLogger::ERROR_CODE => ResponseFactory::ERROR_RATE_LIMIT_UNAVAILABLE,
                     'reason' => $exception->getMessage(),
                     'exception' => $exception,
                 ]);
@@ -93,7 +94,7 @@ final class LimitingHandler implements RequestHandlerInterface
                 );
             }
             if ($wait > 0) {
-                $this->logger->info('The API key exceeded its rate limit', ['error_code' => ResponseFactory::ERROR_RATE_LIMITED, 'retry_after' => $wait]);
+                $this->logger->info('The API key exceeded its rate limit', [JsonLogger::ERROR_CODE => ResponseFactory::ERROR_RATE_LIMITED, 'retry_after' => $wait]);
 
                 return $this->responses->error(
                     429,
@@ -107,7 +108,7 @@ final class LimitingHandler implements RequestHandlerInterface
         try {
             $this->limits->assertBodyAllowed($request);
         } catch (RequestException $exception) {
-            $this->logger->info('The request body is too large', ['error_code' => $exception->getErrorCode()]);
+            $this->logger->info('The request body is too large', [JsonLogger::ERROR_CODE => $exception->getErrorCode()]);
 
             return $this->responses->fromException($exception);
         }

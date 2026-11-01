@@ -13,6 +13,7 @@ use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
 use Mfonte\SecureImageConverter\Contract\Exception\ConversionTimeoutException;
 use Mfonte\SecureImageConverter\Contract\Exception\ErrorCode;
 use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as LibraryException;
@@ -59,7 +60,7 @@ final class V2ConvertHandler implements RequestHandlerInterface
      * unsupported_media_type...), kept apart from the library's codes under
      * ErrorMapper::LOG_KEY.
      */
-    public const ERROR_LOG_KEY = 'error_code';
+    public const ERROR_LOG_KEY = JsonLogger::ERROR_CODE;
 
     /**
      * @var ConverterFactoryInterface
