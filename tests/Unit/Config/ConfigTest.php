@@ -447,9 +447,8 @@ final class ConfigTest extends TestCase
     }
 
     /**
-     * .env.example documents every key, set or commented out, plus the 1.x
-     * SCRIPT_NAME that process.php still reads; what it sets is a valid
-     * configuration.
+     * .env.example documents every key, set or commented out; what it sets
+     * is a valid configuration.
      */
     public function testTheExampleDocumentsEveryKey(): void
     {
@@ -457,7 +456,7 @@ final class ConfigTest extends TestCase
         preg_match_all('/^;?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
         $values = parse_ini_file($example);
 
-        self::assertSame(['V1_SCRIPT_NAME', 'SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT', 'MAX_BODY_BYTES', 'MAX_IMAGE_BYTES', 'V1_MAX_FILES', 'CONCURRENCY_SLOTS', 'CONCURRENCY_WAIT', 'LOCK_DIR', 'RATE_LIMIT', 'RATE_LIMIT_BURST', 'RATE_LIMIT_STORE'], $matches[1]);
+        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT', 'MAX_BODY_BYTES', 'MAX_IMAGE_BYTES', 'V1_MAX_FILES', 'CONCURRENCY_SLOTS', 'CONCURRENCY_WAIT', 'LOCK_DIR', 'RATE_LIMIT', 'RATE_LIMIT_BURST', 'RATE_LIMIT_STORE'], $matches[1]);
         self::assertSame([], array_diff(Config::KEYS, $matches[1]));
         self::assertIsArray($values);
         self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys($values));

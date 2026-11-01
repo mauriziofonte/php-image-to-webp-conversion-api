@@ -1,8 +1,7 @@
 # PHPStan at level max, analysed as PHP 7.2.5 (the lowest supported version).
 # phpstan-php85.neon.dist includes this file and analyses as PHP 8.5;
 # `composer analyse` runs both. No baseline: every finding is fixed, or
-# ignored inline with a one-line justification. Files of the previous major
-# version (process.php) are not analysed until they are replaced.
+# ignored inline with a one-line justification.
 
 # The deprecation rules report calls deprecated in the analysed PHP version
 # (curl_close() and finfo_close() on PHP 8.5) or in the dependencies; the
