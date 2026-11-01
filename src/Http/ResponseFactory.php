@@ -82,6 +82,12 @@ final class ResponseFactory
     public const ERROR_RATE_LIMIT_UNAVAILABLE = 'rate_limit_unavailable';
 
     /**
+     * 503: the conversion slots (the lock files of LOCK_DIR) cannot be taken, so the request is refused rather than
+     * converted beyond CONCURRENCY_SLOTS; Retry-After is 1 and the details are in the log.
+     */
+    public const ERROR_CONCURRENCY_UNAVAILABLE = 'concurrency_unavailable';
+
+    /**
      * Media type of the Prometheus text exposition format 0.0.4.
      */
     public const PROMETHEUS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';

@@ -6,6 +6,7 @@ namespace Mfonte\ImageConversionApi\Http\Handler;
 
 use Mfonte\ImageConversionApi\Conversion\ConverterFactoryInterface;
 use Mfonte\ImageConversionApi\Conversion\Deadline;
+use Mfonte\ImageConversionApi\Exception\RequestException;
 use Mfonte\ImageConversionApi\Http\InputReader;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
 use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
@@ -41,8 +42,10 @@ use Symfony\Component\HttpFoundation\Response;
  * A request refused as a whole answers {"status": false, "version",
  * "message"} with the status of the error, where 1.x answered 200: 400
  * without images or with invalid descriptors, 413 with too many files, 503
- * with Retry-After when no conversion slot frees up or the isolation is
- * unavailable (the remaining files could not be converted either). Any
+ * with Retry-After when no conversion slot frees up, the slots cannot be
+ * taken (an unusable LOCK_DIR, logged at error level with its cause) or
+ * the isolation is unavailable (the remaining files could not be
+ * converted either). Any
  * other failure is the file's own: its entry has "status": false and the
  * 1.x message for an upload error, an extension or a failed conversion
  * ("Conversion failed."), the fixed ErrorMapper sentence for a rejected
@@ -152,6 +155,11 @@ final class V1ConvertHandler implements RequestHandlerInterface
 
             try {
                 $entries[] = $this->convert($file, $filename, $descriptor, $index, $conversion, $directory, $deadline);
+            } catch (RequestException $exception) {
+                self::close($entries);
+                $this->logRefusal($exception);
+
+                return $this->responses->error($exception->getStatusCode(), $exception->getMessage(), $exception->getHeaders());
             } catch (LibraryException $exception) {
                 $code = $this->errors->codeOf($exception);
                 $this->log($this->errors->isServerError($exception), $code, $exception);
@@ -174,6 +182,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
      * @param array<mixed> $descriptor
      *
      * @throws LibraryException when the conversion fails
+     * @throws RequestException when the conversion slots cannot be taken
      *
      * @return array{data: array<mixed>, image: resource|null, imageBytes: int}
      */
@@ -306,6 +315,21 @@ final class V1ConvertHandler implements RequestHandlerInterface
         ]);
 
         return $this->responses->error($status, $message);
+    }
+
+    /**
+     * Logs a request refused as a whole by the API (the conversion slots
+     * cannot be taken), with its cause.
+     */
+    private function logRefusal(RequestException $exception): void
+    {
+        $context = [V2ConvertHandler::ERROR_LOG_KEY => $exception->getErrorCode(), 'route' => 'v1', 'reason' => $exception->getMessage()];
+        if ($exception->getStatusCode() >= 500) {
+            $context['exception'] = $exception;
+            $this->logger->error('The conversion failed: {' . V2ConvertHandler::ERROR_LOG_KEY . '}', $context);
+        } else {
+            $this->logger->info('The 1.x request was refused: {' . V2ConvertHandler::ERROR_LOG_KEY . '}', $context);
+        }
     }
 
     /**

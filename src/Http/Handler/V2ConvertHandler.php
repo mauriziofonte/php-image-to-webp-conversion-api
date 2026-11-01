@@ -43,7 +43,9 @@ use Symfony\Component\HttpFoundation\Response;
  * (file_too_large included, when the body reader finds it first) and
  * ERROR_LOG_KEY (error_code) for one of the API, and with the exception's
  * message as "reason": at info level for the request's errors, at error
- * level for the server's.
+ * level for the server's, with the exception itself (its previous one
+ * included), so that the cause of a fixed client sentence such as 503
+ * concurrency_unavailable reaches the log.
  */
 final class V2ConvertHandler implements RequestHandlerInterface
 {
@@ -163,6 +165,7 @@ final class V2ConvertHandler implements RequestHandlerInterface
         $key = in_array($code, ErrorCode::all(), true) ? ErrorMapper::LOG_KEY : self::ERROR_LOG_KEY;
         $context = [$key => $code, 'route' => 'v2_convert', 'reason' => $exception->getMessage()];
         if ($serverError) {
+            $context['exception'] = $exception;
             $this->logger->error('The conversion failed: {' . $key . '}', $context);
         } else {
             $this->logger->info('The conversion request was refused: {' . $key . '}', $context);

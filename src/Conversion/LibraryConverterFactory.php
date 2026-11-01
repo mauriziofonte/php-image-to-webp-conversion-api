@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Conversion;
 
+use Mfonte\ImageConversionApi\Exception\RequestException;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
 use Mfonte\SecureImageConverter\Contract\ConverterInterface;
 use Mfonte\SecureImageConverter\Contract\Exception\InvalidArgumentException;
@@ -36,7 +37,10 @@ use Mfonte\SecureImageConverter\Validation\Limits;
  *   host's slots (the library's Semaphore) once the input passed its
  *   checks, waiting at most CONCURRENCY_WAIT, then fails with
  *   concurrency_limit (503 with Retry-After). The wait is part of the time
- *   limit: the processing ceiling is what is left after it.
+ *   limit: the processing ceiling is what is left after it. Slots that
+ *   cannot be taken (an unusable LOCK_DIR) fail with the RequestException
+ *   of ConversionSlots::unavailable() (503 concurrency_unavailable, with
+ *   Retry-After), from create() or from the converter's convert().
  *
  * The builder is built again for each request; IsolationDetector and the
  * backends' capability cache keep what they probe in files, so that costs
@@ -87,7 +91,8 @@ final class LibraryConverterFactory implements ConverterFactoryInterface
     }
 
     /**
-     * @throws InvalidArgumentException when the working directory does not exist, or LOCK_DIR is not usable
+     * @throws InvalidArgumentException when the working directory does not exist
+     * @throws RequestException         503 concurrency_unavailable when LOCK_DIR is not usable
      */
     public function create(string $workingDirectory, float $timeLimitSeconds): ConverterInterface
     {

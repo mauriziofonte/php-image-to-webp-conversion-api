@@ -7,21 +7,36 @@ namespace Mfonte\ImageConversionApi\Tests\Functional\Limits;
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Config\Config;
 use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
+use Mfonte\ImageConversionApi\Exception\RequestException;
 use Mfonte\ImageConversionApi\Exception\RuntimeException;
+use Mfonte\ImageConversionApi\Http\Handler\V1ConvertHandler;
+use Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler;
+use Mfonte\ImageConversionApi\Http\InputReader;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
+use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
+use Mfonte\ImageConversionApi\Limits\GuardedSemaphore;
 use Mfonte\ImageConversionApi\Limits\LimitingHandler;
+use Mfonte\ImageConversionApi\Limits\RateLimiter;
 use Mfonte\ImageConversionApi\Limits\RequestLimits;
+use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
+use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
 use Mfonte\ImageConversionApi\Observability\ErrorLogLogger;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverter;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Conversion\ScriptedConverterFactory;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
+use Mfonte\ImageConversionApi\Tests\Fixtures\Limits\MemoryRateLimitStore;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Log\MemoryLogger;
 use Mfonte\SecureImageConverter\Contract\Exception\InvalidArgumentException as LibraryInvalidArgumentException;
+use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
+use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
+use Mfonte\SecureImageConverter\Validation\Limits;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
@@ -37,12 +52,18 @@ use Yoast\PHPUnitPolyfills\TestCases\TestCase;
  * @covers \Mfonte\ImageConversionApi\Limits\FileRateLimitStore
  * @covers \Mfonte\ImageConversionApi\Limits\RequestLimits
  * @covers \Mfonte\ImageConversionApi\Limits\ConversionSlots
+ * @covers \Mfonte\ImageConversionApi\Limits\GuardedSemaphore
+ * @covers \Mfonte\ImageConversionApi\Http\Handler\V2ConvertHandler
+ * @covers \Mfonte\ImageConversionApi\Http\Handler\V1ConvertHandler
  * @covers \Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory
  * @covers \Mfonte\ImageConversionApi\Http\KernelFactory
  * @covers \Mfonte\ImageConversionApi\Http\Kernel
  */
 #[CoversClass(LimitingHandler::class)]
 #[CoversClass(ConversionSlots::class)]
+#[CoversClass(GuardedSemaphore::class)]
+#[CoversClass(V2ConvertHandler::class)]
+#[CoversClass(V1ConvertHandler::class)]
 #[CoversClass(LibraryConverterFactory::class)]
 #[CoversClass(KernelFactory::class)]
 #[CoversClass(Kernel::class)]
@@ -188,6 +209,150 @@ final class LimitsTest extends TestCase
         self::assertFileExists($stale . '/locks/semaphore.0.lock');
     }
 
+    /**
+     * @return array<string, array{array<string, string>, string, string}>
+     */
+    public static function provideRateLimitSettings(): array
+    {
+        return [
+            'rate limiting off' => [['RATE_LIMIT' => '0'], 'concurrency_unavailable', 'The concurrency limit cannot be checked: retry later.'],
+            'file store, which reaches LOCK_DIR first' => [['RATE_LIMIT' => '60', 'RATE_LIMIT_STORE' => 'file'], 'rate_limit_unavailable', 'The rate limit cannot be checked: retry later.'],
+        ];
+    }
+
+    /**
+     * Finding F2 of the W4 review: an unusable LOCK_DIR answers 503 with
+     * Retry-After whichever component reaches it first, never 500.
+     *
+     * @dataProvider provideRateLimitSettings
+     *
+     * @param array<string, string> $config
+     */
+    #[DataProvider('provideRateLimitSettings')]
+    public function testAnUnusableLockDirectoryIs503OnEveryPath(array $config, string $code, string $message): void
+    {
+        $response = $this->send($this->raw((string) base64_decode(self::PNG, true), self::KEY), $config + ['LOCK_DIR' => $this->sharedLockDirectory()], null, true);
+
+        self::assertSame(503, $response->getStatusCode(), (string) $response->getContent());
+        self::assertSame(['error' => ['code' => $code, 'message' => $message]], json_decode((string) $response->getContent(), true));
+        self::assertSame('1', $response->headers->get('Retry-After'));
+        self::assertSame([], is_dir($this->directory->path('temp')) ? $this->directory->entries('temp') : [], 'no request directory is left');
+    }
+
+    /**
+     * With the APCu store, the rate limit does not touch LOCK_DIR: the
+     * conversion slots find it unusable.
+     */
+    public function testAnUnusableLockDirectoryIs503WithTheApcuStore(): void
+    {
+        if (!ApcuRateLimitStore::isAvailable()) {
+            self::markTestSkipped('APCu is not enabled (apc.enabled, apc.enable_cli); the fake store of the next test covers this path.');
+        }
+        $config = ['RATE_LIMIT' => '1000', 'RATE_LIMIT_BURST' => '1000', 'RATE_LIMIT_STORE' => 'apcu', 'LOCK_DIR' => $this->sharedLockDirectory()];
+
+        $response = $this->send($this->raw((string) base64_decode(self::PNG, true), self::KEY), $config, null, true);
+
+        self::assertSame(503, $response->getStatusCode(), (string) $response->getContent());
+        self::assertStringContainsString('"code":"concurrency_unavailable"', (string) $response->getContent());
+        self::assertSame('1', $response->headers->get('Retry-After'));
+    }
+
+    /**
+     * The APCu path with a store that, as APCu, keeps its buckets away from
+     * LOCK_DIR; the error log keeps the cause behind the fixed sentence.
+     */
+    public function testAnUnusableLockDirectoryIs503WithAStoreOutsideIt(): void
+    {
+        $responses = new ResponseFactory();
+        $converters = new LibraryConverterFactory(
+            new SecureConverterBuilder(),
+            new Limits(),
+            (new ConverterOptions())->withSlotWaitSeconds(0.0),
+            new ConversionSlots($this->sharedLockDirectory(), 2)
+        );
+        $handler = new LimitingHandler(
+            new V2ConvertHandler($converters, new InputReader(), new V2RequestMapper(), new ErrorMapper(), $responses, $this->logger, 30),
+            new RequestLimits(1000000),
+            new RateLimiter(new MemoryRateLimitStore(), 60, 5),
+            $responses,
+            $this->logger
+        );
+        $request = $this->raw((string) base64_decode(self::PNG, true), self::KEY);
+        $request->attributes->set(Kernel::CLIENT_ATTRIBUTE, 'client');
+        $directories = new RequestDirectories($this->directory->path('temp'));
+
+        $response = $handler->handle($request, $directories->forRequest());
+        $directories->removeAll();
+
+        self::assertSame(503, $response->getStatusCode(), (string) $response->getContent());
+        self::assertSame(['error' => ['code' => 'concurrency_unavailable', 'message' => 'The concurrency limit cannot be checked: retry later.']], json_decode((string) $response->getContent(), true));
+        self::assertSame('1', $response->headers->get('Retry-After'));
+        $errors = $this->errorRecords();
+        self::assertCount(1, $errors);
+        self::assertSame('concurrency_unavailable', $errors[0]['context'][V2ConvertHandler::ERROR_LOG_KEY] ?? null);
+        $exception = $errors[0]['context']['exception'] ?? null;
+        self::assertInstanceOf(RequestException::class, $exception);
+        self::assertInstanceOf(LibraryInvalidArgumentException::class, $exception->getPrevious());
+
+        // The production logger keeps the class and the message of both exceptions.
+        $lines = [];
+        (new ErrorLogLogger(static function (string $line) use (&$lines): bool {
+            $lines[] = $line;
+
+            return true;
+        }))->log('error', $errors[0]['message'], $errors[0]['context']);
+        self::assertCount(1, $lines);
+        self::assertStringContainsString(json_encode(LibraryInvalidArgumentException::class, JSON_UNESCAPED_SLASHES) ?: '-', $lines[0]);
+        self::assertStringContainsString('lock directory', $lines[0]);
+    }
+
+    /**
+     * A slot file that cannot be opened fails when the library takes the
+     * slot, inside convert(): the same 503.
+     */
+    public function testASlotFileThatCannotBeOpenedIs503(): void
+    {
+        $locks = $this->directory->path('locks');
+        mkdir($locks . '/semaphore.' . ConversionSlots::NAME . '.0.lock', 0700, true);
+        $config = ['RATE_LIMIT' => '0', 'LOCK_DIR' => $locks, 'CONCURRENCY_SLOTS' => '1', 'CONCURRENCY_WAIT' => '0'];
+
+        $response = $this->send($this->raw((string) base64_decode(self::PNG, true), self::KEY), $config, null, true);
+
+        self::assertSame(503, $response->getStatusCode(), (string) $response->getContent());
+        self::assertStringContainsString('"code":"concurrency_unavailable"', (string) $response->getContent());
+        self::assertSame('1', $response->headers->get('Retry-After'));
+        self::assertSame([], $this->directory->entries('temp'), 'neither the request directory nor a working directory is left');
+    }
+
+    /**
+     * The 1.x endpoint refuses the whole batch with the same 503, in its own
+     * document shape.
+     */
+    public function testAnUnusableLockDirectoryIs503OnV1(): void
+    {
+        $png = $this->directory->path('photo.png');
+        file_put_contents($png, (string) base64_decode(self::PNG, true));
+        $config = ['RATE_LIMIT' => '0', 'LOCK_DIR' => $this->sharedLockDirectory(), 'V1_SCRIPT_NAME' => 'convert-now'];
+        $request = Request::create('https://api.example.test/v1/convert-now', 'POST', [], [], ['images' => [
+            new UploadedFile($png, 'photo.png', 'image/png', UPLOAD_ERR_OK, true),
+        ]], $this->server(self::KEY, ['CONTENT_TYPE' => 'multipart/form-data; boundary=----v1']));
+
+        $response = $this->send($request, $config, null, true);
+        ob_start();
+        $response->sendContent();
+        $document = json_decode((string) ob_get_clean(), true);
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertSame('1', $response->headers->get('Retry-After'));
+        self::assertIsArray($document);
+        self::assertFalse($document['status'] ?? null);
+        self::assertSame('The concurrency limit cannot be checked: retry later.', $document['message'] ?? null);
+        $errors = $this->errorRecords();
+        self::assertCount(1, $errors);
+        self::assertSame('concurrency_unavailable', $errors[0]['context'][V2ConvertHandler::ERROR_LOG_KEY] ?? null);
+        self::assertInstanceOf(RequestException::class, $errors[0]['context']['exception'] ?? null);
+    }
+
     public function testRateLimitingCanBeTurnedOff(): void
     {
         for ($request = 0; $request < 20; ++$request) {
@@ -251,6 +416,29 @@ final class LimitsTest extends TestCase
         self::assertSame('1', $response->headers->get('Retry-After'));
         self::assertLessThan(5.0, $elapsed);
         self::assertSame([], $this->directory->entries('temp'), 'the request directory is removed');
+    }
+
+    /**
+     * A LOCK_DIR that other users may write to, which the library's
+     * LockDirectory refuses.
+     */
+    private function sharedLockDirectory(): string
+    {
+        $locks = $this->directory->path('shared-locks');
+        mkdir($locks);
+        chmod($locks, 0777);
+
+        return $locks;
+    }
+
+    /**
+     * @return list<array{level: string, message: string, context: array<mixed>}>
+     */
+    private function errorRecords(): array
+    {
+        return array_values(array_filter($this->logger->getRecords(), static function (array $record): bool {
+            return $record['level'] === 'error';
+        }));
     }
 
     /**

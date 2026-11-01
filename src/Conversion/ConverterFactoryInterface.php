@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Conversion;
 
+use Mfonte\ImageConversionApi\Exception\RequestException;
 use Mfonte\SecureImageConverter\Contract\ConverterInterface;
 use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface;
 
@@ -24,6 +25,9 @@ interface ConverterFactoryInterface
      *
      * @throws ExceptionInterface when the converter cannot be created (an isolation level that a strict policy
      *                            requires and the host lacks, an invalid setting)
+     * @throws RequestException   when a resource of the host the conversions need cannot be used (the conversion
+     *                            slots of an unusable LOCK_DIR: 503 concurrency_unavailable); the converter's
+     *                            convert() may throw it too, when it takes a slot
      */
     public function create(string $workingDirectory, float $timeLimitSeconds): ConverterInterface;
 

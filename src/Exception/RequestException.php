@@ -6,7 +6,8 @@ namespace Mfonte\ImageConversionApi\Exception;
 
 /**
  * A request that the service refuses before or instead of a conversion: no
- * image, a body in an unsupported shape, a limit of the API exceeded. It
+ * image, a body in an unsupported shape, a limit of the API exceeded or
+ * not checkable (the conversion slots of an unusable LOCK_DIR). It
  * carries the HTTP status, the machine-readable error code and the fixed
  * sentence of the error body, so that a handler can answer it as it is.
  *
@@ -35,10 +36,11 @@ final class RequestException extends \RuntimeException implements ExceptionInter
      * @param string                $errorCode  stable machine-readable code (snake_case)
      * @param string                $message    fixed sentence for the client, never request data
      * @param array<string, string> $headers    response headers that go with the error, such as Retry-After
+     * @param \Throwable|null       $previous   the failure behind the error, for the log
      */
-    public function __construct(int $statusCode, string $errorCode, string $message, array $headers = [])
+    public function __construct(int $statusCode, string $errorCode, string $message, array $headers = [], ?\Throwable $previous = null)
     {
-        parent::__construct($message);
+        parent::__construct($message, 0, $previous);
         $this->statusCode = $statusCode;
         $this->errorCode = $errorCode;
         $this->headers = $headers;
