@@ -38,7 +38,7 @@ It now converts with the library and the limits of `/v2/convert`, which changes 
 
 - **process.php is gone.** The front controller is `public/index.php`, and the web server's document root must be `public/`. The `.htaccess` at the repository root is the 1.x one: it still rewrites every request to the removed `process.php`, so a host whose document root is the repository root answers 404 to everything. Do not use it; the Apache and nginx configuration of 2.0 is not written yet.
 - **The 1.x URL moved.** `https://example.com/<SCRIPT_NAME>` is now `https://example.com/v1/<V1_SCRIPT_NAME>`: point 1.x clients at the new path, and rename the `.env` key `SCRIPT_NAME` to `V1_SCRIPT_NAME` (see `.env.example`). The endpoint is deprecated (see above).
-- **Configuration** is read from environment variables (`env[KEY]` in a PHP-FPM pool, `SetEnv` in Apache), not yet from a `.env` file.
+- **Configuration** is read from environment variables first (`env[KEY]` in a PHP-FPM pool, `SetEnv` in Apache, `environment:` in Docker), then from the optional `.env` file at the root of the installation. Its comments now start with `#` (the `;` comments of a 1.x file are still skipped), and a value with spaces must be quoted.
 
 ## Why Use This Microservice?
 
@@ -65,7 +65,7 @@ By using this external microservice, you can **offload the conversion process to
 ## Configuring the `.env` File
 
 * **SCRIPT\_NAME**: The endpoint name that will be whitelisted to allow requests to the microservice.
-* **API\_KEY**: The API key that must be provided via the `X-API-Key` header. Use at least 16 characters: the 2.x service refuses shorter keys.
+* **API\_KEY**: The API key that clients send as `Authorization: Bearer <key>` or in the `X-API-Key` header. Use at least 16 bytes (a multibyte character counts for each of its bytes): the 2.x service refuses shorter keys.
 
 **Example:**
 

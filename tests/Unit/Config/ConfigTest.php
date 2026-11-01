@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mfonte\ImageConversionApi\Tests\Unit\Config;
 
 use Mfonte\ImageConversionApi\Config\Config;
+use Mfonte\ImageConversionApi\Config\ConfigLoader;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 use Mfonte\ImageConversionApi\Tests\Fixtures\Filesystem\TemporaryDirectory;
@@ -61,6 +62,64 @@ final class ConfigTest extends TestCase
         self::assertSame(300, $config->getRateLimit());
         self::assertSame(50, $config->getRateLimitBurst());
         self::assertSame(Config::RATE_LIMIT_STORE_AUTO, $config->getRateLimitStore());
+        self::assertSame(Config::METRICS_STORE_AUTO, $config->getMetricsStore());
+        self::assertSame([], $config->getMetricsKeys());
+        self::assertNull($config->getConverterCacheDirectory());
+        self::assertNull($config->getLogFile());
+        self::assertSame('info', $config->getLogLevel());
+    }
+
+    public function testReadsTheObservabilitySettings(): void
+    {
+        $config = Config::fromArray([
+            'METRICS_STORE' => 'OFF',
+            'METRICS_KEYS' => ' scraper-key-0123456789 ,, other-scraper-0123456789,scraper-key-0123456789',
+            'CONVERTER_CACHE_DIR' => '/var/cache/image-conversion-api',
+            'LOG_FILE' => 'stderr',
+            'LOG_LEVEL' => 'Warning',
+        ]);
+
+        self::assertSame(Config::METRICS_STORE_OFF, $config->getMetricsStore());
+        self::assertSame(['scraper-key-0123456789', 'other-scraper-0123456789'], $config->getMetricsKeys());
+        self::assertSame([], $config->getApiKeys(), 'a metrics key is no API key');
+        self::assertSame('/var/cache/image-conversion-api', $config->getConverterCacheDirectory());
+        self::assertSame(Config::LOG_FILE_STDERR, $config->getLogFile());
+        self::assertSame('warning', $config->getLogLevel());
+        self::assertSame('/var/log/api.log', Config::fromArray(['LOG_FILE' => '/var/log/api.log'])->getLogFile());
+        self::assertSame(Config::METRICS_STORE_FILE, Config::fromArray(['METRICS_STORE' => 'file'])->getMetricsStore());
+    }
+
+    /**
+     * @return array<string, array{array<string, string>, string}>
+     */
+    public static function provideInvalidObservabilitySettings(): array
+    {
+        return [
+            'metrics store' => [['METRICS_STORE' => 'redis'], 'METRICS_STORE must be auto, apcu, file or off'],
+            'short metrics key' => [['METRICS_KEYS' => 'scraper-key-0123456789,tiny-key'], 'METRICS_KEYS must list keys of at least 16 bytes: key 2 is shorter'],
+            'relative cache directory' => [['CONVERTER_CACHE_DIR' => 'var/cache'], 'CONVERTER_CACHE_DIR must be an absolute path without "." or ".." segments, empty segments or a trailing "/"'],
+            'cache directory with ..' => [['CONVERTER_CACHE_DIR' => '/var/cache/../tmp'], 'CONVERTER_CACHE_DIR must be an absolute path without "." or ".." segments, empty segments or a trailing "/"'],
+            'cache directory with a trailing slash' => [['CONVERTER_CACHE_DIR' => '/var/cache/'], 'CONVERTER_CACHE_DIR must be an absolute path without "." or ".." segments, empty segments or a trailing "/"'],
+            'relative log file' => [['LOG_FILE' => 'api.log'], 'LOG_FILE must be "stderr" or an absolute path'],
+            'log level' => [['LOG_LEVEL' => 'verbose'], 'LOG_LEVEL must be one of debug, info, notice, warning, error, critical, alert and emergency'],
+        ];
+    }
+
+    /**
+     * @dataProvider provideInvalidObservabilitySettings
+     *
+     * @param array<string, string> $values
+     */
+    #[DataProvider('provideInvalidObservabilitySettings')]
+    public function testRefusesInvalidObservabilitySettings(array $values, string $error): void
+    {
+        try {
+            Config::fromArray($values);
+            self::fail('The value is refused');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertSame([$error], $exception->getErrors());
+            self::assertStringNotContainsString('tiny-key', $exception->getMessage(), 'the error never names a key');
+        }
     }
 
     public function testReadsTheLimits(): void
@@ -294,12 +353,12 @@ final class ConfigTest extends TestCase
         $fifteen = str_repeat('s', 15);
 
         return [
-            'API_KEY' => [['API_KEY' => 'a'], 'API_KEY must be at least 16 characters long'],
-            'API_KEY of 15 characters' => [['API_KEY' => $fifteen], 'API_KEY must be at least 16 characters long'],
-            'API_KEY of 15 characters and blanks' => [['API_KEY' => '  ' . $fifteen . "\t"], 'API_KEY must be at least 16 characters long'],
+            'API_KEY' => [['API_KEY' => 'a'], 'API_KEY must be at least 16 bytes long'],
+            'API_KEY of 15 characters' => [['API_KEY' => $fifteen], 'API_KEY must be at least 16 bytes long'],
+            'API_KEY of 15 characters and blanks' => [['API_KEY' => '  ' . $fifteen . "\t"], 'API_KEY must be at least 16 bytes long'],
             'second key of API_KEYS' => [
                 ['API_KEYS' => 'first-key-0123456789, , ' . $fifteen . ',third-key-0123456789'],
-                'API_KEYS must list keys of at least 16 characters: key 2 is shorter',
+                'API_KEYS must list keys of at least 16 bytes: key 2 is shorter',
             ],
         ];
     }
@@ -517,19 +576,16 @@ final class ConfigTest extends TestCase
     public function testTheExampleDocumentsEveryKey(): void
     {
         $example = dirname(__DIR__, 3) . '/.env.example';
-        preg_match_all('/^;?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
-        $values = parse_ini_file($example);
+        preg_match_all('/^#?([A-Z][A-Z0-9_]*) = /m', (string) file_get_contents($example), $matches);
+        $values = (new ConfigLoader($example, static function (string $name): ?string {
+            return null;
+        }))->readValues();
 
-        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT', 'MAX_BODY_BYTES', 'MAX_IMAGE_BYTES', 'V1_MAX_FILES', 'CONCURRENCY_SLOTS', 'CONCURRENCY_WAIT', 'LOCK_DIR', 'RATE_LIMIT', 'RATE_LIMIT_BURST', 'RATE_LIMIT_STORE'], $matches[1]);
+        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY', 'API_KEYS', 'TEMP_DIR', 'TRUSTED_PROXIES', 'REQUIRE_HTTPS', 'IP_ALLOWLIST', 'CONVERSION_TIME_LIMIT', 'MAX_BODY_BYTES', 'MAX_IMAGE_BYTES', 'V1_MAX_FILES', 'CONCURRENCY_SLOTS', 'CONCURRENCY_WAIT', 'LOCK_DIR', 'RATE_LIMIT', 'RATE_LIMIT_BURST', 'RATE_LIMIT_STORE', 'METRICS_STORE', 'METRICS_KEYS', 'CONVERTER_CACHE_DIR', 'LOG_FILE', 'LOG_LEVEL'], $matches[1]);
         self::assertSame([], array_diff(Config::KEYS, $matches[1]));
-        self::assertIsArray($values);
-        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys($values));
-        $strings = [];
-        foreach ($values as $key => $value) {
-            self::assertIsString($value);
-            $strings[(string) $key] = $value;
-        }
-        self::assertSame([$strings['API_KEY']], Config::fromArray($strings)->getApiKeys());
+        self::assertSame(['V1_SCRIPT_NAME', 'API_KEY'], array_keys(array_filter($values, 'is_string')));
+        self::assertIsString($values['API_KEY']);
+        self::assertSame([$values['API_KEY']], Config::fromArray($values)->getApiKeys());
     }
 
     /**

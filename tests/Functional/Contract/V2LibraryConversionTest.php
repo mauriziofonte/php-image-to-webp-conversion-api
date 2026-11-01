@@ -100,12 +100,33 @@ final class V2LibraryConversionTest extends TestCase
         self::assertSame([], $this->directory->entries());
     }
 
-    private function send(string $body, string $query): Response
+    /**
+     * CONVERTER_CACHE_DIR receives what the library probed (the isolation
+     * level and the capabilities of the backends), so that a read-only root
+     * filesystem does not make every process probe again.
+     */
+    public function testKeepsTheProbedCapabilitiesInTheConverterCacheDirectory(): void
+    {
+        self::assertNotNull($this->locks);
+        $cache = $this->locks->path('converter-cache');
+
+        $response = $this->send(self::png(16, 16), '', ['CONVERTER_CACHE_DIR' => $cache]);
+
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+        self::assertDirectoryExists($cache);
+        self::assertSame(0700, fileperms($cache) & 0777);
+        self::assertNotSame([], $this->locks->entries('converter-cache'), 'the library wrote its cache files');
+    }
+
+    /**
+     * @param array<string, string> $config
+     */
+    private function send(string $body, string $query, array $config = []): Response
     {
         self::assertNotNull($this->directory);
         self::assertNotNull($this->locks);
         $kernel = KernelFactory::create(
-            Config::fromArray(['TEMP_DIR' => $this->directory->path(), 'LOCK_DIR' => $this->locks->path('locks'), 'API_KEY' => self::API_KEY]),
+            Config::fromArray($config + ['TEMP_DIR' => $this->directory->path(), 'LOCK_DIR' => $this->locks->path('locks'), 'API_KEY' => self::API_KEY]),
             new MemoryLogger()
         );
 

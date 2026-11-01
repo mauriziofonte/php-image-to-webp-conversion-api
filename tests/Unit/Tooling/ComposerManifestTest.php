@@ -72,8 +72,23 @@ final class ComposerManifestTest extends TestCase
         $require = self::section('require');
 
         self::assertSame('^5.4.54 || ^6.4.46 || ^7.4.19 || ^8.1.7', $require['symfony/http-foundation'] ?? null);
+        self::assertSame('^5.4.35 || ^6.4.3 || ^7.0.3 || ^8.0', $require['symfony/console'] ?? null);
+        self::assertSame('^5.6.1', $require['vlucas/phpdotenv'] ?? null);
         self::assertSame('^1.1 || ^2.0 || ^3.0', $require['psr/log'] ?? null);
         self::assertSame('*', $require['ext-json'] ?? null);
+    }
+
+    /**
+     * symfony/string, which symfony/console requires, prints deprecations
+     * on PHP 8.4 and later below these releases: its floor is a conflict
+     * entry, the proxy's, since it is no direct dependency.
+     */
+    public function testTheFloorOfSymfonyStringMatchesTheProxy(): void
+    {
+        self::assertSame(
+            ['symfony/string' => '<5.4.35 || >=6.0,<6.4.3 || >=7.0,<7.0.3'],
+            self::section('conflict')
+        );
     }
 
     /**

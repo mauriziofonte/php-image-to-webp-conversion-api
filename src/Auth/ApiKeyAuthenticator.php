@@ -43,7 +43,7 @@ use Symfony\Component\HttpFoundation\Request;
  * through, whatever it carries. 1.x let a request without a header in when
  * API_KEY was missing too (C-4).
  *
- * Every configured key is at least MINIMUM_KEY_LENGTH characters long: a
+ * Every configured key is at least MINIMUM_KEY_LENGTH bytes long: a
  * shorter key can be guessed faster than a per-key rate limit slows the
  * guessing down.
  */
@@ -62,7 +62,8 @@ final class ApiKeyAuthenticator
     public const INVALID_KEY = 'invalid_api_key';
 
     /**
-     * Shortest accepted key, in characters (counted in bytes, after trimming).
+     * Shortest accepted key, in bytes (after trimming): a multibyte
+     * character counts for each of its bytes.
      */
     public const MINIMUM_KEY_LENGTH = 16;
 
@@ -95,7 +96,7 @@ final class ApiKeyAuthenticator
         foreach ($keys as $key) {
             $key = trim($key);
             if (strlen($key) < self::MINIMUM_KEY_LENGTH) {
-                throw new InvalidArgumentException(sprintf('An API key must be at least %d characters long', self::MINIMUM_KEY_LENGTH));
+                throw new InvalidArgumentException(sprintf('An API key must be at least %d bytes long', self::MINIMUM_KEY_LENGTH));
             }
             $this->digests[] = $this->digest($key);
         }

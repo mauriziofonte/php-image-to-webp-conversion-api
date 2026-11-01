@@ -175,7 +175,7 @@ final class ApiKeyAuthenticatorTest extends TestCase
     public function testRefusesAKeyShorterThanTheMinimum(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('An API key must be at least 16 characters long');
+        $this->expectExceptionMessage('An API key must be at least 16 bytes long');
 
         new ApiKeyAuthenticator([self::KEY, ' ' . str_repeat('k', ApiKeyAuthenticator::MINIMUM_KEY_LENGTH - 1) . ' ']);
     }

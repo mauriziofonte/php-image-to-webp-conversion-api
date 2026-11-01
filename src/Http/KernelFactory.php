@@ -25,6 +25,8 @@ use Mfonte\ImageConversionApi\Mapping\V1RequestMapper;
 use Mfonte\ImageConversionApi\Mapping\V1ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
 use Mfonte\SecureImageConverter\Backend\BackendOptions;
+use Mfonte\SecureImageConverter\Isolation\IsolationDetector;
+use Mfonte\SecureImageConverter\Isolation\ProcessOptions;
 use Mfonte\SecureImageConverter\Pipeline\ConverterOptions;
 use Mfonte\SecureImageConverter\Pipeline\SecureConverterBuilder;
 use Mfonte\SecureImageConverter\Validation\Limits;
@@ -50,8 +52,9 @@ use Psr\Log\LoggerInterface;
  * and a Link to V1_DEPRECATION_NOTICE. The conversion
  * endpoints sit behind LimitingHandler (RATE_LIMIT, MAX_BODY_BYTES) and
  * convert with the library (LibraryConverterFactory: MAX_IMAGE_BYTES,
- * CONCURRENCY_SLOTS and CONCURRENCY_WAIT, the library's default backends
- * and isolation policy) unless another ConverterFactoryInterface is given.
+ * CONCURRENCY_SLOTS and CONCURRENCY_WAIT, CONVERTER_CACHE_DIR, the
+ * library's default backends and isolation policy) unless another
+ * ConverterFactoryInterface is given.
  */
 final class KernelFactory
 {
@@ -90,7 +93,7 @@ final class KernelFactory
         $responses = new ResponseFactory();
         if ($converters === null) {
             $converters = new LibraryConverterFactory(
-                (new SecureConverterBuilder())->withBackendOptions((new BackendOptions())->withLogger($logger)),
+                self::converterBuilder($config, $logger),
                 (new Limits())->withMaxBytes($config->getMaxImageBytes()),
                 (new ConverterOptions())->withSlotWaitSeconds((float) $config->getConcurrencyWait()),
                 new ConversionSlots($config->getLockDirectory(), $config->getConcurrencySlots())
@@ -107,6 +110,26 @@ final class KernelFactory
             $responses,
             $logger
         );
+    }
+
+    /**
+     * The settings of the library's converters: the library's defaults,
+     * the logger, and CONVERTER_CACHE_DIR for the capability cache of the
+     * backends and the cache of the isolation detector, when it is set.
+     */
+    private static function converterBuilder(Config $config, LoggerInterface $logger): SecureConverterBuilder
+    {
+        $backendOptions = (new BackendOptions())->withLogger($logger);
+        $builder = new SecureConverterBuilder();
+        $cacheDirectory = $config->getConverterCacheDirectory();
+        if ($cacheDirectory !== null) {
+            $backendOptions = $backendOptions->withCapabilityCache(true, $cacheDirectory);
+            $builder = $builder->withIsolationDetector(
+                new IsolationDetector(new ProcessOptions(), $cacheDirectory, IsolationDetector::DEFAULT_CACHE_TTL_SECONDS, $logger)
+            );
+        }
+
+        return $builder->withBackendOptions($backendOptions);
     }
 
     /**

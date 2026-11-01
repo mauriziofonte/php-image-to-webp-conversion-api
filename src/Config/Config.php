@@ -10,16 +10,19 @@ use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\IpRange;
 use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
+use Mfonte\ImageConversionApi\Observability\JsonLogger;
+use Mfonte\SecureImageConverter\Isolation\ExecutableFinder;
+use Psr\Log\LogLevel;
 
 /**
  * The configuration of the service, immutable and already validated.
  *
- * It is read from environment variables (fromEnvironment(), with getenv(),
- * which also sees the variables that PHP-FPM pools and Apache SetEnv pass to
- * the request). For every key, a missing variable, the empty string and the
- * literal "null" mean "not set", and the default applies. API-7 adds the
- * optional .env file, the compiled cache and check-env on top of
- * fromArray().
+ * It is read by ConfigLoader: environment variables first (getenv(), which
+ * also sees the variables that PHP-FPM pools and Apache SetEnv pass to the
+ * request), then the optional .env file. For every key, a missing
+ * variable, the empty string and the literal "null" mean "not set", and the
+ * default applies. fromArray() is the validator: the front controller and
+ * the check-env command both go through it.
  *
  * Keys:
  *
@@ -43,9 +46,9 @@ use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
  *   included, as in 1.x.
  * - API_KEYS: further accepted keys, separated by commas, for rotation: add
  *   the new key, move the clients, then remove the old one.
- *   Every key is at least 16 characters long (counted in bytes): a shorter
- *   one makes the configuration invalid, and the service answers 503
- *   invalid_configuration. With neither set, every protected endpoint
+ *   Every key is at least 16 bytes long (a multibyte character counts for
+ *   each of its bytes): a shorter one makes the configuration invalid,
+ *   and the service answers 503 invalid_configuration. With neither set, every protected endpoint
  *   answers 503 authentication_not_configured: the service fails closed.
  * - IP_ALLOWLIST: comma-separated IPs and CIDR blocks (IPv4 and IPv6) of
  *   the clients allowed on the protected endpoints, in addition to the API
@@ -100,6 +103,26 @@ use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
  *   LOCK_DIR, locked with flock(), shared by every PHP process of the
  *   host) or auto (apcu when APCu is enabled, otherwise file). Default:
  *   auto.
+ * - METRICS_STORE: where the counters of /metrics are kept: apcu, file
+ *   (one file in LOCK_DIR, locked with flock()), auto (apcu when APCu is
+ *   enabled, otherwise file) or off (nothing is counted, /metrics only
+ *   answers image_conversion_api_up). Default: auto.
+ * - METRICS_KEYS: further keys, separated by commas, each at least 16
+ *   bytes long, accepted on /metrics only, so that a Prometheus scraper
+ *   does not hold a key that converts images. The API keys are accepted
+ *   on /metrics too. Default: none.
+ * - CONVERTER_CACHE_DIR: absolute path of the directory where the
+ *   conversion library keeps the capabilities it probed (backends and
+ *   isolation level), private to the PHP user (created with mode 0700).
+ *   Probing takes seconds, so on a read-only root filesystem this must
+ *   point to a writable volume, or every process probes again. Default:
+ *   the library's, sys_get_temp_dir()/secure-image-converter-<euid>.
+ * - LOG_FILE: where the JSON log lines go: "stderr" (the standard error
+ *   stream, the container log behind PHP-FPM with catch_workers_output on
+ *   and decorate_workers_output off) or the absolute path of a file
+ *   appended to, whose directory exists. Default: PHP's error_log().
+ * - LOG_LEVEL: the least severe PSR-3 level that is logged: debug, info,
+ *   notice, warning, error, critical, alert or emergency. Default: info.
  */
 final class Config
 {
@@ -124,6 +147,11 @@ final class Config
         'RATE_LIMIT',
         'RATE_LIMIT_BURST',
         'RATE_LIMIT_STORE',
+        'METRICS_STORE',
+        'METRICS_KEYS',
+        'CONVERTER_CACHE_DIR',
+        'LOG_FILE',
+        'LOG_LEVEL',
     ];
 
     /** RATE_LIMIT_STORE: APCu when it is enabled, otherwise files. */
@@ -134,6 +162,23 @@ final class Config
 
     /** RATE_LIMIT_STORE: one file per key in LOCK_DIR. */
     public const RATE_LIMIT_STORE_FILE = 'file';
+
+    /** METRICS_STORE: APCu when it is enabled, otherwise a file. */
+    public const METRICS_STORE_AUTO = 'auto';
+
+    /** METRICS_STORE: APCu. */
+    public const METRICS_STORE_APCU = 'apcu';
+
+    /** METRICS_STORE: one file in LOCK_DIR. */
+    public const METRICS_STORE_FILE = 'file';
+
+    /** METRICS_STORE: nothing is counted. */
+    public const METRICS_STORE_OFF = 'off';
+
+    /** LOG_FILE value of the standard error stream. */
+    public const LOG_FILE_STDERR = JsonLogger::DESTINATION_STDERR;
+
+    public const DEFAULT_LOG_LEVEL = LogLevel::INFO;
 
     /**
      * Name of the default LOCK_DIR in TEMP_DIR. It does not start with
@@ -263,12 +308,38 @@ final class Config
      */
     private $rateLimitStore = self::RATE_LIMIT_STORE_AUTO;
 
+    /**
+     * @var string
+     */
+    private $metricsStore = self::METRICS_STORE_AUTO;
+
+    /**
+     * @var list<string>
+     */
+    private $metricsKeys = [];
+
+    /**
+     * @var string|null
+     */
+    private $converterCacheDirectory;
+
+    /**
+     * @var string|null
+     */
+    private $logFile;
+
+    /**
+     * @var string
+     */
+    private $logLevel = self::DEFAULT_LOG_LEVEL;
+
     private function __construct()
     {
     }
 
     /**
-     * Reads every key from the environment and validates it.
+     * Reads every key from the environment, without a .env file, and
+     * validates it.
      *
      * @param list<string> $webRoots directories the web server serves files from (the directory of the front
      *                               controller, DOCUMENT_ROOT); empty strings are ignored
@@ -277,13 +348,7 @@ final class Config
      */
     public static function fromEnvironment(array $webRoots = []): self
     {
-        $values = [];
-        foreach (self::KEYS as $key) {
-            $value = getenv($key);
-            $values[$key] = is_string($value) ? $value : null;
-        }
-
-        return self::fromArray($values, $webRoots);
+        return (new ConfigLoader(null))->load($webRoots);
     }
 
     /**
@@ -349,7 +414,7 @@ final class Config
         $apiKey = self::value($values, 'API_KEY');
         if ($apiKey !== null) {
             if (strlen($apiKey) < $minimumLength) {
-                $errors[] = sprintf('API_KEY must be at least %d characters long', $minimumLength);
+                $errors[] = sprintf('API_KEY must be at least %d bytes long', $minimumLength);
             }
             $config->apiKeys[] = $apiKey;
         }
@@ -362,9 +427,22 @@ final class Config
             ++$position;
             if (strlen($key) < $minimumLength) {
                 // The position, never the key: the message ends up in the log.
-                $errors[] = sprintf('API_KEYS must list keys of at least %d characters: key %d is shorter', $minimumLength, $position);
+                $errors[] = sprintf('API_KEYS must list keys of at least %d bytes: key %d is shorter', $minimumLength, $position);
             } elseif (!in_array($key, $config->apiKeys, true)) {
                 $config->apiKeys[] = $key;
+            }
+        }
+        $position = 0;
+        foreach (explode(',', (string) self::value($values, 'METRICS_KEYS')) as $key) {
+            $key = trim($key);
+            if ($key === '') {
+                continue;
+            }
+            ++$position;
+            if (strlen($key) < $minimumLength) {
+                $errors[] = sprintf('METRICS_KEYS must list keys of at least %d bytes: key %d is shorter', $minimumLength, $position);
+            } elseif (!in_array($key, $config->metricsKeys, true)) {
+                $config->metricsKeys[] = $key;
             }
         }
 
@@ -395,6 +473,37 @@ final class Config
                 $errors[] = 'RATE_LIMIT_STORE is apcu, but APCu is not enabled in this PHP (apc.enabled, apc.enable_cli)';
             } else {
                 $config->rateLimitStore = $store;
+            }
+        }
+
+        $metricsStore = self::value($values, 'METRICS_STORE');
+        if ($metricsStore !== null) {
+            $metricsStore = strtolower($metricsStore);
+            if (!in_array($metricsStore, [self::METRICS_STORE_AUTO, self::METRICS_STORE_APCU, self::METRICS_STORE_FILE, self::METRICS_STORE_OFF], true)) {
+                $errors[] = 'METRICS_STORE must be auto, apcu, file or off';
+            } elseif ($metricsStore === self::METRICS_STORE_APCU && !ApcuRateLimitStore::isAvailable()) {
+                $errors[] = 'METRICS_STORE is apcu, but APCu is not enabled in this PHP (apc.enabled, apc.enable_cli)';
+            } else {
+                $config->metricsStore = $metricsStore;
+            }
+        }
+
+        $config->converterCacheDirectory = self::value($values, 'CONVERTER_CACHE_DIR');
+        if ($config->converterCacheDirectory !== null && !ExecutableFinder::isAbsolutePath($config->converterCacheDirectory)) {
+            $errors[] = 'CONVERTER_CACHE_DIR must be an absolute path without "." or ".." segments, empty segments or a trailing "/"';
+        }
+
+        $config->logFile = self::value($values, 'LOG_FILE');
+        if ($config->logFile !== null && $config->logFile !== self::LOG_FILE_STDERR && !self::isAbsolutePath($config->logFile)) {
+            $errors[] = 'LOG_FILE must be "stderr" or an absolute path';
+        }
+        $logLevel = self::value($values, 'LOG_LEVEL');
+        if ($logLevel !== null) {
+            $logLevel = strtolower($logLevel);
+            if (!JsonLogger::isLevel($logLevel)) {
+                $errors[] = 'LOG_LEVEL must be one of debug, info, notice, warning, error, critical, alert and emergency';
+            } else {
+                $config->logLevel = $logLevel;
             }
         }
 
@@ -553,6 +662,51 @@ final class Config
     public function getRateLimitStore(): string
     {
         return $this->rateLimitStore;
+    }
+
+    /**
+     * METRICS_STORE: one of the METRICS_STORE_* constants.
+     */
+    public function getMetricsStore(): string
+    {
+        return $this->metricsStore;
+    }
+
+    /**
+     * METRICS_KEYS: the keys accepted on /metrics only, trimmed and without
+     * duplicates; empty when none is configured.
+     *
+     * @return list<string>
+     */
+    public function getMetricsKeys(): array
+    {
+        return $this->metricsKeys;
+    }
+
+    /**
+     * CONVERTER_CACHE_DIR: the capability and isolation cache of the
+     * conversion library; null for the library's default.
+     */
+    public function getConverterCacheDirectory(): ?string
+    {
+        return $this->converterCacheDirectory;
+    }
+
+    /**
+     * LOG_FILE: LOG_FILE_STDERR, the absolute path of a file, or null for
+     * PHP's error_log().
+     */
+    public function getLogFile(): ?string
+    {
+        return $this->logFile;
+    }
+
+    /**
+     * LOG_LEVEL: the least severe PSR-3 level that is logged.
+     */
+    public function getLogLevel(): string
+    {
+        return $this->logLevel;
     }
 
     /**

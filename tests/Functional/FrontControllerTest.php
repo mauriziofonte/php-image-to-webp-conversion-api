@@ -145,7 +145,7 @@ final class FrontControllerTest extends TestCase
         self::assertSame(503, $response['status'], $server->getOutput());
         self::assertStringContainsString('"code":"invalid_configuration"', $response['body']);
         self::assertSame(503, $server->request('GET', '/healthz')['status']);
-        self::assertStringContainsString('API_KEY must be at least 16 characters long', $server->getOutput());
+        self::assertStringContainsString('API_KEY must be at least 16 bytes long', $server->getOutput());
         self::assertStringNotContainsString('short-key-xyz', $server->getOutput());
     }
 
