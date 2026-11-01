@@ -157,6 +157,17 @@ final class CheckEnvCommandTest extends TestCase
         self::assertSame(0, $this->probes, 'the host is not checked with an invalid configuration');
     }
 
+    public function testAMalformedDigestIsAnError(): void
+    {
+        $this->environment['API_KEYS'] = 'sha256:' . str_repeat('ab', 31) . 'c';
+
+        list($exitCode, $output) = $this->check();
+
+        self::assertSame(1, $exitCode);
+        self::assertStringContainsString('API_KEYS: key 1 is a SHA-256 digest that must be followed by exactly 64 hexadecimal digits', $output);
+        self::assertStringNotContainsString('abab', $output);
+    }
+
     public function testTheInformationalRunReportsErrorsWithoutFailing(): void
     {
         $this->environment['RATE_LIMIT'] = 'many';

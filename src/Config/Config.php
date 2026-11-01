@@ -52,7 +52,9 @@ use Psr\Log\LogLevel;
  *   answers 503 authentication_not_configured: the service fails closed.
  *   A key may be given as its SHA-256 digest instead, "sha256:<64 hex
  *   digits>" (here and in METRICS_KEYS), so that the configuration does
- *   not hold the key itself (ApiKeyAuthenticator::DIGEST_PREFIX).
+ *   not hold the key itself (ApiKeyAuthenticator::DIGEST_PREFIX). An
+ *   entry that starts with "sha256:" (in any case) but is no such digest
+ *   makes the configuration invalid; it is never taken as a key.
  * - IP_ALLOWLIST: comma-separated IPs and CIDR blocks (IPv4 and IPv6) of
  *   the clients allowed on the protected endpoints, in addition to the API
  *   key; the client address is taken from X-Forwarded-For only behind
@@ -415,8 +417,11 @@ final class Config
 
         $minimumLength = ApiKeyAuthenticator::MINIMUM_KEY_LENGTH;
         $apiKey = self::value($values, 'API_KEY');
+        $malformedDigest = 'must be followed by exactly 64 hexadecimal digits after "' . ApiKeyAuthenticator::DIGEST_PREFIX . '"';
         if ($apiKey !== null) {
-            if (strlen($apiKey) < $minimumLength) {
+            if (ApiKeyAuthenticator::isMalformedDigest($apiKey)) {
+                $errors[] = 'API_KEY is a SHA-256 digest that ' . $malformedDigest;
+            } elseif (strlen($apiKey) < $minimumLength) {
                 $errors[] = sprintf('API_KEY must be at least %d bytes long', $minimumLength);
             }
             $config->apiKeys[] = $apiKey;
@@ -428,8 +433,10 @@ final class Config
                 continue;
             }
             ++$position;
-            if (strlen($key) < $minimumLength) {
+            if (ApiKeyAuthenticator::isMalformedDigest($key)) {
                 // The position, never the key: the message ends up in the log.
+                $errors[] = sprintf('API_KEYS: key %d is a SHA-256 digest that %s', $position, $malformedDigest);
+            } elseif (strlen($key) < $minimumLength) {
                 $errors[] = sprintf('API_KEYS must list keys of at least %d bytes: key %d is shorter', $minimumLength, $position);
             } elseif (!in_array($key, $config->apiKeys, true)) {
                 $config->apiKeys[] = $key;
@@ -442,7 +449,9 @@ final class Config
                 continue;
             }
             ++$position;
-            if (strlen($key) < $minimumLength) {
+            if (ApiKeyAuthenticator::isMalformedDigest($key)) {
+                $errors[] = sprintf('METRICS_KEYS: key %d is a SHA-256 digest that %s', $position, $malformedDigest);
+            } elseif (strlen($key) < $minimumLength) {
                 $errors[] = sprintf('METRICS_KEYS must list keys of at least %d bytes: key %d is shorter', $minimumLength, $position);
             } elseif (!in_array($key, $config->metricsKeys, true)) {
                 $config->metricsKeys[] = $key;

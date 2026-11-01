@@ -52,7 +52,9 @@ use Symfony\Component\HttpFoundation\Request;
  * itself is not held by the configuration: the environment of PHP-FPM
  * can be read by the processes of its user, conversions included when
  * they run without the sandbox isolation. Such an entry is never taken
- * as a key; the length of the key behind it cannot be checked.
+ * as a key; the length of the key behind it cannot be checked. An entry
+ * that starts with the prefix but is no such digest is refused, never
+ * taken as a key: a mistyped digest must not become a credential.
  */
 final class ApiKeyAuthenticator
 {
@@ -102,13 +104,17 @@ final class ApiKeyAuthenticator
      * @param list<string> $keys the accepted keys, compared after trimming, or their digests
      *                           ("sha256:<hex>"); empty refuses every request
      *
-     * @throws InvalidArgumentException when a key is shorter than MINIMUM_KEY_LENGTH (blank included)
+     * @throws InvalidArgumentException when a key is shorter than MINIMUM_KEY_LENGTH (blank included), or starts
+     *                                  with DIGEST_PREFIX without being a digest
      */
     public function __construct(array $keys)
     {
         $this->hmacKey = random_bytes(32);
         foreach ($keys as $key) {
             $key = trim($key);
+            if (self::isMalformedDigest($key)) {
+                throw new InvalidArgumentException(sprintf('An API key that starts with "%s" must be followed by exactly 64 hexadecimal digits', self::DIGEST_PREFIX));
+            }
             $sha256 = self::configuredDigest($key);
             if ($sha256 === null) {
                 if (strlen($key) < self::MINIMUM_KEY_LENGTH) {
@@ -127,6 +133,17 @@ final class ApiKeyAuthenticator
     public static function isDigest(string $key): bool
     {
         return self::configuredDigest(trim($key)) !== null;
+    }
+
+    /**
+     * Whether $key starts with DIGEST_PREFIX (in any case) without being a
+     * digest: a configuration error, never a key.
+     */
+    public static function isMalformedDigest(string $key): bool
+    {
+        $key = trim($key);
+
+        return strncasecmp($key, self::DIGEST_PREFIX, strlen(self::DIGEST_PREFIX)) === 0 && self::configuredDigest($key) === null;
     }
 
     /**

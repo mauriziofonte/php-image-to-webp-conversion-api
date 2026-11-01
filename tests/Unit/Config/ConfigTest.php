@@ -384,6 +384,58 @@ final class ConfigTest extends TestCase
         }
     }
 
+    /**
+     * @return array<string, array{array<string, string>, string}>
+     */
+    public static function provideMalformedDigests(): array
+    {
+        $short = 'sha256:' . str_repeat('ab', 31) . 'c';
+
+        return [
+            'API_KEY' => [['API_KEY' => $short], 'API_KEY is a SHA-256 digest that must be followed by exactly 64 hexadecimal digits after "sha256:"'],
+            'second key of API_KEYS' => [
+                ['API_KEYS' => 'first-key-0123456789, SHA256:' . str_repeat('g', 64)],
+                'API_KEYS: key 2 is a SHA-256 digest that must be followed by exactly 64 hexadecimal digits after "sha256:"',
+            ],
+            'METRICS_KEYS' => [
+                ['API_KEY' => 'first-key-0123456789', 'METRICS_KEYS' => $short],
+                'METRICS_KEYS: key 1 is a SHA-256 digest that must be followed by exactly 64 hexadecimal digits after "sha256:"',
+            ],
+        ];
+    }
+
+    /**
+     * An entry that starts with "sha256:" but is no digest (63 digits, a
+     * letter that is no hexadecimal digit) is a configuration error, not a
+     * key that its own text would open.
+     *
+     * @dataProvider provideMalformedDigests
+     *
+     * @param array<string, string> $values
+     */
+    #[DataProvider('provideMalformedDigests')]
+    public function testRefusesMalformedDigests(array $values, string $error): void
+    {
+        try {
+            Config::fromArray($values);
+            self::fail('A malformed digest is refused');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertSame([$error], $exception->getErrors());
+            self::assertStringNotContainsString('abab', $exception->getMessage());
+            self::assertStringNotContainsString('gggg', $exception->getMessage());
+        }
+    }
+
+    public function testAcceptsDigests(): void
+    {
+        $digest = 'sha256:' . hash('sha256', 'first-key-0123456789');
+
+        $config = Config::fromArray(['API_KEY' => $digest, 'API_KEYS' => strtoupper($digest), 'METRICS_KEYS' => $digest]);
+
+        self::assertSame([$digest, strtoupper($digest)], $config->getApiKeys());
+        self::assertSame([$digest], $config->getMetricsKeys());
+    }
+
     public function testRefusesAnInvalidBoolean(): void
     {
         $this->expectException(InvalidConfigurationException::class);

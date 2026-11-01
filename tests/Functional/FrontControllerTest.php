@@ -153,6 +153,25 @@ final class FrontControllerTest extends TestCase
         self::assertStringNotContainsString('short-key-xyz', $server->getOutput());
     }
 
+    /**
+     * A mistyped digest (63 digits) makes the configuration invalid: its
+     * own text, were it to leak, opens nothing, and neither does any key.
+     */
+    public function testRefusesAMalformedDigest(): void
+    {
+        $malformed = 'sha256:' . substr(hash('sha256', 'next-key-0123456789'), 1);
+        $server = $this->start(['TEMP_DIR' => $this->directory->path('temp'), 'TRUSTED_PROXIES' => '127.0.0.1', 'API_KEY' => 'first-key-0123456789', 'API_KEYS' => $malformed]);
+
+        foreach ([$malformed, 'first-key-0123456789'] as $presented) {
+            $response = $server->request('POST', '/v2/convert', ['X-Forwarded-Proto' => 'https', 'X-API-Key' => $presented]);
+
+            self::assertSame(503, $response['status'], $server->getOutput());
+            self::assertStringContainsString('"code":"invalid_configuration"', $response['body']);
+        }
+        self::assertStringContainsString('API_KEYS: key 1 is a SHA-256 digest that must be followed by exactly 64 hexadecimal digits', $server->getOutput());
+        self::assertStringNotContainsString((string) substr($malformed, 7, 20), $server->getOutput());
+    }
+
     public function testRefusesATemporaryDirectoryInsideTheWebRoot(): void
     {
         $server = $this->start(['TEMP_DIR' => dirname(__DIR__, 2) . '/public/temp']);

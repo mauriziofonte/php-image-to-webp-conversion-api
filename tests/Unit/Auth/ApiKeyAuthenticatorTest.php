@@ -230,10 +230,44 @@ final class ApiKeyAuthenticatorTest extends TestCase
         return [
             'digest' => ['sha256:' . $hex, true],
             'upper case, blanks' => [' SHA256:' . strtoupper($hex) . ' ', true],
-            'one digit short' => ['sha256:' . substr($hex, 1), false],
-            'not hexadecimal' => ['sha256:' . str_repeat('g', 64), false],
             'another algorithm' => ['sha512:' . $hex, false],
+            'the prefix inside a key' => ['my-key-sha256:' . $hex, false],
         ];
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function provideMalformedDigests(): array
+    {
+        $hex = hash('sha256', self::KEY);
+
+        return [
+            'one digit short' => ['sha256:' . substr($hex, 1)],
+            'one digit too many' => ['sha256:' . $hex . '0'],
+            'not hexadecimal' => ['sha256:' . str_repeat('g', 64)],
+            'upper-case prefix, short' => [' SHA256:' . substr($hex, 2) . ' '],
+            'a blank inside' => ['sha256: ' . $hex],
+            'the prefix alone' => ['sha256:'],
+        ];
+    }
+
+    /**
+     * An entry that starts with the prefix but is no digest is refused: a
+     * mistyped digest must never become a key that its own text opens.
+     *
+     * @dataProvider provideMalformedDigests
+     */
+    #[DataProvider('provideMalformedDigests')]
+    public function testRefusesAMalformedDigest(string $configured): void
+    {
+        self::assertTrue(ApiKeyAuthenticator::isMalformedDigest($configured));
+        self::assertFalse(ApiKeyAuthenticator::isDigest($configured));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('must be followed by exactly 64 hexadecimal digits');
+
+        new ApiKeyAuthenticator([self::KEY, $configured]);
     }
 
     /**
@@ -248,6 +282,7 @@ final class ApiKeyAuthenticatorTest extends TestCase
         $authenticator = new ApiKeyAuthenticator([$configured]);
 
         self::assertSame($isDigest, ApiKeyAuthenticator::isDigest($configured));
+        self::assertFalse(ApiKeyAuthenticator::isMalformedDigest($configured));
         self::assertSame(
             $isDigest ? ApiKeyAuthenticator::AUTHENTICATED : ApiKeyAuthenticator::INVALID_KEY,
             $authenticator->authenticate(self::request(['HTTP_X_API_KEY' => self::KEY])),
