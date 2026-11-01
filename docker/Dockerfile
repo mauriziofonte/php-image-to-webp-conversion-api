@@ -48,10 +48,20 @@ RUN apt-get update \
         libfcgi-bin \
     && rm -rf /var/lib/apt/lists/*
 
-FROM runtime-base AS vendor-composer
+# Composer, and the extensions that composer.json's require-dev needs:
+# "composer update --no-dev" still resolves the dev requirements (PHPUnit
+# needs dom, mbstring, xml and xmlwriter), it only leaves them out of
+# vendor/. Only this stage has them; the runtime image stays without.
+# curl makes the downloads faster.
+FROM runtime-base AS vendor-tools
 RUN apt-get update \
     && apt-get install -y --no-install-recommends composer git unzip \
+        php8.3-curl \
+        php8.3-mbstring \
+        php8.3-xml \
     && rm -rf /var/lib/apt/lists/*
+
+FROM vendor-tools AS vendor-composer
 WORKDIR /build
 COPY composer.json ./
 # The library comes from GitHub: an optional "composer_auth" secret (the
