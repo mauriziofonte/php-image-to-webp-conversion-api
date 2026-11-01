@@ -10,9 +10,11 @@ use Mfonte\ImageConversionApi\Exception\RequestException;
 use Mfonte\ImageConversionApi\Http\InputReader;
 use Mfonte\ImageConversionApi\Http\RequestDirectory;
 use Mfonte\ImageConversionApi\Http\RequestHandlerInterface;
+use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V1RequestMapper;
 use Mfonte\ImageConversionApi\Mapping\V1ResponseFactory;
+use Mfonte\ImageConversionApi\Observability\Metrics;
 use Mfonte\SecureImageConverter\Contract\ConversionRequest;
 use Mfonte\SecureImageConverter\Contract\Exception\ConversionTimeoutException;
 use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as LibraryException;
@@ -50,10 +52,22 @@ use Symfony\Component\HttpFoundation\Response;
  * 1.x message for an upload error, an extension or a failed conversion
  * ("Conversion failed."), the fixed ErrorMapper sentence for a rejected
  * image. The library's messages go to the log only, with the error code
- * under ErrorMapper::LOG_KEY.
+ * under ErrorMapper::LOG_KEY. Each file handed to the converter is counted
+ * in the metrics with its outcome: converted, not_webp or its error code.
  */
 final class V1ConvertHandler implements RequestHandlerInterface
 {
+    /**
+     * Name of the route, in logs and metrics.
+     */
+    public const ROUTE = 'v1';
+
+    /**
+     * Metrics outcome of a file whose conversion did not produce WEBP (the
+     * original was kept, or another format was the fallback).
+     */
+    public const OUTCOME_NOT_WEBP = 'not_webp';
+
     /**
      * Prefix of the outputs in the request directory, followed by the index of the file.
      */
@@ -110,8 +124,15 @@ final class V1ConvertHandler implements RequestHandlerInterface
     private $maxFiles;
 
     /**
-     * @param int $timeLimitSeconds CONVERSION_TIME_LIMIT, for the whole batch
-     * @param int $maxFiles         V1_MAX_FILES
+     * @var Metrics
+     */
+    private $metrics;
+
+    /**
+     * @param int          $timeLimitSeconds CONVERSION_TIME_LIMIT, for the whole batch
+     * @param int          $maxFiles         V1_MAX_FILES
+     * @param Metrics|null $metrics          counts the outcome of each file handed to the converter; nothing is
+     *                                       counted when null
      */
     public function __construct(
         ConverterFactoryInterface $converters,
@@ -120,7 +141,8 @@ final class V1ConvertHandler implements RequestHandlerInterface
         ErrorMapper $errors,
         LoggerInterface $logger,
         int $timeLimitSeconds,
-        int $maxFiles
+        int $maxFiles,
+        ?Metrics $metrics = null
     ) {
         $this->converters = $converters;
         $this->mapper = $mapper;
@@ -129,6 +151,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
         $this->logger = $logger;
         $this->timeLimitSeconds = $timeLimitSeconds;
         $this->maxFiles = $maxFiles;
+        $this->metrics = $metrics ?? new Metrics(null);
     }
 
     public function handle(Request $request, RequestDirectory $directory): Response
@@ -157,11 +180,13 @@ final class V1ConvertHandler implements RequestHandlerInterface
                 $entries[] = $this->convert($file, $filename, $descriptor, $index, $conversion, $directory, $deadline);
             } catch (RequestException $exception) {
                 self::close($entries);
+                $this->metrics->recordConversion(self::ROUTE, $exception->getErrorCode(), 0.0);
                 $this->logRefusal($exception);
 
                 return $this->responses->error($exception->getStatusCode(), $exception->getMessage(), $exception->getHeaders());
             } catch (LibraryException $exception) {
                 $code = $this->errors->codeOf($exception);
+                $this->metrics->recordConversion(self::ROUTE, $code, 0.0);
                 $this->log($this->errors->isServerError($exception), $code, $exception);
                 if ($this->errors->statusOf($code) === 503) {
                     self::close($entries);
@@ -217,12 +242,15 @@ final class V1ConvertHandler implements RequestHandlerInterface
         }
 
         $outputPath = $directory->getPath() . DIRECTORY_SEPARATOR . self::OUTPUT_PREFIX . $index;
+        $startedAt = microtime(true);
         $result = $this->converters->create($directory->getPath(), $remaining)->convert($input, $outputPath, $conversion);
+        $seconds = microtime(true) - $startedAt;
         if ($result->getOutputFormat() !== ImageFormat::WEBP) {
+            $this->metrics->recordConversion(self::ROUTE, self::OUTCOME_NOT_WEBP, $seconds);
             $this->logger->info('The 1.x conversion did not produce WEBP: {format}', [
                 'format' => $result->getOutputFormat(),
                 'original_kept' => $result->isPassthrough(),
-                'route' => 'v1',
+                'route' => self::ROUTE,
             ]);
 
             return self::failed($descriptor, $filename, $result->isPassthrough()
@@ -231,8 +259,11 @@ final class V1ConvertHandler implements RequestHandlerInterface
         }
         $output = @fopen($outputPath, 'rb');
         if ($output === false || $inputBytes === 0) {
+            $this->metrics->recordConversion(self::ROUTE, ResponseFactory::ERROR_INTERNAL, $seconds);
+
             return self::failed($descriptor, $filename, 'Conversion failed.');
         }
+        $this->metrics->recordConversion(self::ROUTE, Metrics::CONVERTED, $seconds);
         $outputBytes = $result->getByteSize();
 
         return [
@@ -311,7 +342,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
     {
         $this->logger->info('The 1.x request was refused: {' . V2ConvertHandler::ERROR_LOG_KEY . '}', [
             V2ConvertHandler::ERROR_LOG_KEY => $code,
-            'route' => 'v1',
+            'route' => self::ROUTE,
         ]);
 
         return $this->responses->error($status, $message);
@@ -323,7 +354,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
      */
     private function logRefusal(RequestException $exception): void
     {
-        $context = [V2ConvertHandler::ERROR_LOG_KEY => $exception->getErrorCode(), 'route' => 'v1', 'reason' => $exception->getMessage()];
+        $context = [V2ConvertHandler::ERROR_LOG_KEY => $exception->getErrorCode(), 'route' => self::ROUTE, 'reason' => $exception->getMessage()];
         if ($exception->getStatusCode() >= 500) {
             $context['exception'] = $exception;
             $this->logger->error('The conversion failed: {' . V2ConvertHandler::ERROR_LOG_KEY . '}', $context);
@@ -337,7 +368,7 @@ final class V1ConvertHandler implements RequestHandlerInterface
      */
     private function log(bool $serverError, string $code, LibraryException $exception): void
     {
-        $context = [ErrorMapper::LOG_KEY => $code, 'route' => 'v1', 'reason' => $exception->getMessage()];
+        $context = [ErrorMapper::LOG_KEY => $code, 'route' => self::ROUTE, 'reason' => $exception->getMessage()];
         if ($serverError) {
             $this->logger->error('The conversion failed: {' . ErrorMapper::LOG_KEY . '}', $context);
         } else {

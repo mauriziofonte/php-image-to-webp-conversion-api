@@ -356,7 +356,7 @@ final class LimitsTest extends TestCase
     public function testRateLimitingCanBeTurnedOff(): void
     {
         for ($request = 0; $request < 20; ++$request) {
-            self::assertSame(200, $this->send($this->raw('IMAGE', self::KEY), ['RATE_LIMIT' => '0', 'RATE_LIMIT_BURST' => '1'])->getStatusCode());
+            self::assertSame(200, $this->send($this->raw('IMAGE', self::KEY), ['RATE_LIMIT' => '0', 'RATE_LIMIT_BURST' => '1', 'METRICS_STORE' => 'off'])->getStatusCode());
         }
         self::assertSame([], $this->directory->entries('temp'));
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Http;
 
+use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
 
 /**
@@ -11,7 +12,9 @@ use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
  *
  * A public route is exempt from the access checks (HTTPS, credentials)
  * that the kernel applies to every other path, so it must not reveal
- * anything about the configuration.
+ * anything about the configuration. A protected route may name its own
+ * authenticator, which then replaces the kernel's (/metrics accepts the
+ * METRICS_KEYS as well as the API keys).
  *
  * Immutable value object.
  */
@@ -43,16 +46,29 @@ final class Route
     private $public;
 
     /**
-     * @param string       $name    identifier used in logs, such as "v2_convert"
-     * @param string       $path    exact path relative to the front controller, starting with "/" (no
-     *                              placeholders, no trailing slash except for "/" itself)
-     * @param list<string> $methods HTTP methods the route answers, in the order of the Allow header
-     * @param bool         $public  whether the route answers without HTTPS and without credentials
+     * @var ApiKeyAuthenticator|null
+     */
+    private $authenticator;
+
+    /**
+     * @param string                   $name          identifier used in logs, such as "v2_convert"
+     * @param string                   $path          exact path relative to the front controller, starting with "/" (no
+     *                                                placeholders, no trailing slash except for "/" itself)
+     * @param list<string>             $methods       HTTP methods the route answers, in the order of the Allow header
+     * @param bool                     $public        whether the route answers without HTTPS and without credentials
+     * @param ApiKeyAuthenticator|null $authenticator the keys of this route, in place of the kernel's; null for the
+     *                                                kernel's
      *
      * @throws InvalidArgumentException when the name, the path or a method is malformed
      */
-    public function __construct(string $name, string $path, array $methods, RequestHandlerInterface $handler, bool $public = false)
-    {
+    public function __construct(
+        string $name,
+        string $path,
+        array $methods,
+        RequestHandlerInterface $handler,
+        bool $public = false,
+        ?ApiKeyAuthenticator $authenticator = null
+    ) {
         if (preg_match('/\A[a-z0-9_]+\z/', $name) !== 1) {
             throw new InvalidArgumentException(sprintf('Route name "%s" must match [a-z0-9_]+', $name));
         }
@@ -73,6 +89,7 @@ final class Route
         $this->methods = array_values(array_unique($methods));
         $this->handler = $handler;
         $this->public = $public;
+        $this->authenticator = $authenticator;
     }
 
     public function getName(): string
@@ -106,5 +123,13 @@ final class Route
     public function isPublic(): bool
     {
         return $this->public;
+    }
+
+    /**
+     * The keys of this route, or null when the kernel's apply.
+     */
+    public function getAuthenticator(): ?ApiKeyAuthenticator
+    {
+        return $this->authenticator;
     }
 }

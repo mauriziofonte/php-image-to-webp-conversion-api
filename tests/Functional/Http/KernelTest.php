@@ -41,6 +41,8 @@ final class KernelTest extends TestCase
 
     private const API_KEY = 'kernel-test-key-0123456789';
 
+    private const METRICS_KEY = 'kernel-scraper-key-0123456789';
+
     /**
      * @var TemporaryDirectory
      */
@@ -104,6 +106,51 @@ final class KernelTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
         self::assertSame(ResponseFactory::PROMETHEUS_CONTENT_TYPE, $response->headers->get('Content-Type'));
         self::assertStringContainsString("# TYPE image_conversion_api_up gauge\nimage_conversion_api_up 1\n", (string) $response->getContent());
+    }
+
+    /**
+     * The requests of every kernel, answered or refused, are counted in the
+     * store of METRICS_STORE and rendered by /metrics.
+     */
+    public function testMetricsCountsTheRequestsOfEveryProcess(): void
+    {
+        $config = ['METRICS_STORE' => 'file', 'LOCK_DIR' => $this->directory->path('locks')];
+        $this->handle('GET', '/healthz', $config);
+        $this->handle('GET', '/healthz', $config);
+        $this->handle('GET', '/nowhere', $config);
+        $this->handle('POST', '/v2/convert', $config, ['HTTP_AUTHORIZATION' => 'Bearer wrong-key-0123456789abc']);
+
+        $body = (string) $this->handle('GET', '/metrics', $config)->getContent();
+
+        self::assertStringContainsString("image_conversion_api_metrics_available 1\n", $body);
+        self::assertStringContainsString("# TYPE image_conversion_api_requests_total counter\n", $body);
+        self::assertStringContainsString('image_conversion_api_requests_total{route="healthz",status="200"} 2' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_requests_total{route="none",status="404"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_requests_total{route="v2_convert",status="401"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_request_duration_seconds_count{route="healthz"} 2' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_request_duration_seconds_bucket{route="healthz",le="+Inf"} 2' . "\n", $body);
+        self::assertStringNotContainsString(self::API_KEY, $body);
+        self::assertSame([], $this->logger->getRecords());
+    }
+
+    /**
+     * A key of METRICS_KEYS opens /metrics and nothing else.
+     */
+    public function testAMetricsKeyOpensOnlyMetrics(): void
+    {
+        $config = ['METRICS_KEYS' => self::METRICS_KEY];
+        $server = ['HTTP_AUTHORIZATION' => 'Bearer ' . self::METRICS_KEY];
+
+        self::assertSame(200, $this->handle('GET', '/metrics', $config, $server)->getStatusCode());
+        self::assertSame(200, $this->handle('GET', '/metrics', $config, ['HTTP_X_API_KEY' => self::METRICS_KEY])->getStatusCode());
+        self::assertSame(200, $this->handle('GET', '/metrics', $config)->getStatusCode());
+
+        $convert = $this->handle('POST', '/v2/convert', $config, $server);
+        self::assertSame(401, $convert->getStatusCode());
+        self::assertSame('invalid_api_key', self::errorCode($convert));
+        self::assertSame(401, $this->handle('POST', '/v1/' . self::SCRIPT_NAME, $config, $server)->getStatusCode());
+        self::assertSame(401, $this->handle('GET', '/nowhere', $config, $server)->getStatusCode());
+        self::assertSame(401, $this->handle('GET', '/metrics', $config, ['HTTP_AUTHORIZATION' => 'Bearer wrong-key-0123456789abc'])->getStatusCode());
     }
 
     public function testV2ConvertNeedsAnImage(): void
@@ -288,7 +335,7 @@ final class KernelTest extends TestCase
      */
     private function handle(string $method, string $path, array $config = [], array $server = []): Response
     {
-        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0'];
+        $values = $config + ['V1_SCRIPT_NAME' => self::SCRIPT_NAME, 'TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0', 'METRICS_STORE' => 'off'];
         $kernel = KernelFactory::create(Config::fromArray($values), $this->logger);
         $server += ['HTTP_AUTHORIZATION' => 'Bearer ' . self::API_KEY];
 

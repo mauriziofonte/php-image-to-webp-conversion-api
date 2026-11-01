@@ -24,6 +24,10 @@ use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V1RequestMapper;
 use Mfonte\ImageConversionApi\Mapping\V1ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
+use Mfonte\ImageConversionApi\Observability\ApcuMetricsStore;
+use Mfonte\ImageConversionApi\Observability\FileMetricsStore;
+use Mfonte\ImageConversionApi\Observability\Metrics;
+use Mfonte\ImageConversionApi\Observability\MetricsStoreInterface;
 use Mfonte\SecureImageConverter\Backend\BackendOptions;
 use Mfonte\SecureImageConverter\Isolation\IsolationDetector;
 use Mfonte\SecureImageConverter\Isolation\ProcessOptions;
@@ -45,7 +49,12 @@ use Psr\Log\LoggerInterface;
  * | /v1/{V1_SCRIPT_NAME}    | POST      | protected | V1ConvertHandler, limited       |
  * | /v2/convert             | POST      | protected | V2ConvertHandler, limited       |
  * | /healthz                | GET, HEAD | public    | HealthHandler                   |
- * | /metrics                | GET, HEAD | protected | MetricsHandler                  |
+ * | /metrics                | GET, HEAD | protected | MetricsHandler (+ METRICS_KEYS) |
+ *
+ * /metrics accepts the METRICS_KEYS besides the API keys, so that a
+ * Prometheus scraper needs no key that converts images; IP_ALLOWLIST and
+ * REQUIRE_HTTPS apply to it as to every protected route. Every route
+ * counts in the same Metrics, kept in METRICS_STORE.
  *
  * The /v1 route exists only when V1_SCRIPT_NAME is set, and is deprecated:
  * its responses carry Deprecation (V1_DEPRECATED_AT), Sunset (V1_SUNSET_AT)
@@ -100,15 +109,18 @@ final class KernelFactory
             );
         }
 
+        $metrics = new Metrics(self::metricsStore($config));
+
         return new Kernel(
-            new Router(self::routes($config, $responses, $converters, $logger)),
+            new Router(self::routes($config, $responses, $converters, $logger, $metrics)),
             new TrustedProxies($config->getTrustedProxies()),
             $config->isHttpsRequired(),
             new ApiKeyAuthenticator($config->getApiKeys()),
             new IpAllowlist($config->getIpAllowlist()),
             new RequestDirectories($config->getTemporaryDirectory(), self::staleAfterSeconds($config), [$config->getLockDirectory()]),
             $responses,
-            $logger
+            $logger,
+            $metrics
         );
     }
 
@@ -143,6 +155,22 @@ final class KernelFactory
     }
 
     /**
+     * The store of the metrics (METRICS_STORE); null when it is off.
+     */
+    private static function metricsStore(Config $config): ?MetricsStoreInterface
+    {
+        $store = $config->getMetricsStore();
+        if ($store === Config::METRICS_STORE_OFF) {
+            return null;
+        }
+        if ($store === Config::METRICS_STORE_APCU || ($store === Config::METRICS_STORE_AUTO && ApcuMetricsStore::isAvailable())) {
+            return new ApcuMetricsStore();
+        }
+
+        return new FileMetricsStore($config->getLockDirectory());
+    }
+
+    /**
      * The per-key rate limiter; null when RATE_LIMIT is 0.
      */
     private static function rateLimiter(Config $config): ?RateLimiter
@@ -161,8 +189,13 @@ final class KernelFactory
     /**
      * @return list<Route>
      */
-    private static function routes(Config $config, ResponseFactory $responses, ConverterFactoryInterface $converters, LoggerInterface $logger): array
-    {
+    private static function routes(
+        Config $config,
+        ResponseFactory $responses,
+        ConverterFactoryInterface $converters,
+        LoggerInterface $logger,
+        Metrics $metrics
+    ): array {
         $v2 = new V2ConvertHandler(
             $converters,
             new InputReader(),
@@ -170,14 +203,22 @@ final class KernelFactory
             new ErrorMapper(),
             $responses,
             $logger,
-            $config->getConversionTimeLimit()
+            $config->getConversionTimeLimit(),
+            $metrics
         );
         $limits = new RequestLimits($config->getMaxBodyBytes());
         $rateLimiter = self::rateLimiter($config);
         $routes = [
             new Route('v2_convert', '/v2/convert', ['POST'], new LimitingHandler($v2, $limits, $rateLimiter, $responses, $logger)),
             new Route('healthz', '/healthz', ['GET', 'HEAD'], new HealthHandler($responses), true),
-            new Route('metrics', '/metrics', ['GET', 'HEAD'], new MetricsHandler($responses)),
+            new Route(
+                'metrics',
+                '/metrics',
+                ['GET', 'HEAD'],
+                new MetricsHandler($responses, $metrics),
+                false,
+                new ApiKeyAuthenticator(array_merge($config->getApiKeys(), $config->getMetricsKeys()))
+            ),
         ];
 
         $v1ScriptName = $config->getV1ScriptName();
@@ -189,7 +230,8 @@ final class KernelFactory
                 new ErrorMapper(),
                 $logger,
                 $config->getConversionTimeLimit(),
-                $config->getV1MaxFiles()
+                $config->getV1MaxFiles(),
+                $metrics
             );
             $routes[] = new Route('v1', '/v1/' . $v1ScriptName, ['POST'], new DeprecatedHandler(
                 new LimitingHandler($v1, $limits, $rateLimiter, $responses, $logger),

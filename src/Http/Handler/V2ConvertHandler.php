@@ -14,6 +14,7 @@ use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Mapping\ErrorMapper;
 use Mfonte\ImageConversionApi\Mapping\V2RequestMapper;
 use Mfonte\ImageConversionApi\Observability\JsonLogger;
+use Mfonte\ImageConversionApi\Observability\Metrics;
 use Mfonte\SecureImageConverter\Contract\Exception\ConversionTimeoutException;
 use Mfonte\SecureImageConverter\Contract\Exception\ErrorCode;
 use Mfonte\SecureImageConverter\Contract\Exception\ExceptionInterface as LibraryException;
@@ -46,10 +47,17 @@ use Symfony\Component\HttpFoundation\Response;
  * message as "reason": at info level for the request's errors, at error
  * level for the server's, with the exception itself (its previous one
  * included), so that the cause of a fixed client sentence such as 503
- * concurrency_unavailable reaches the log.
+ * concurrency_unavailable reaches the log. Each request is counted in the
+ * metrics with its outcome: converted (with the duration of the
+ * conversion) or its error code.
  */
 final class V2ConvertHandler implements RequestHandlerInterface
 {
+    /**
+     * Name of the route, in logs and metrics.
+     */
+    public const ROUTE = 'v2_convert';
+
     /**
      * Name of the output in the request directory.
      */
@@ -98,8 +106,14 @@ final class V2ConvertHandler implements RequestHandlerInterface
     private $timeLimitSeconds;
 
     /**
-     * @param int $timeLimitSeconds CONVERSION_TIME_LIMIT: the longest time the request may spend converting, from
-     *                              the moment PHP received it
+     * @var Metrics
+     */
+    private $metrics;
+
+    /**
+     * @param int          $timeLimitSeconds CONVERSION_TIME_LIMIT: the longest time the request may spend converting,
+     *                                       from the moment PHP received it
+     * @param Metrics|null $metrics          counts the outcome of each request; nothing is counted when null
      */
     public function __construct(
         ConverterFactoryInterface $converters,
@@ -108,7 +122,8 @@ final class V2ConvertHandler implements RequestHandlerInterface
         ErrorMapper $errors,
         ResponseFactory $responses,
         LoggerInterface $logger,
-        int $timeLimitSeconds
+        int $timeLimitSeconds,
+        ?Metrics $metrics = null
     ) {
         $this->converters = $converters;
         $this->input = $input;
@@ -117,6 +132,7 @@ final class V2ConvertHandler implements RequestHandlerInterface
         $this->responses = $responses;
         $this->logger = $logger;
         $this->timeLimitSeconds = $timeLimitSeconds;
+        $this->metrics = $metrics ?? new Metrics(null);
     }
 
     public function handle(Request $request, RequestDirectory $directory): Response
@@ -132,20 +148,25 @@ final class V2ConvertHandler implements RequestHandlerInterface
             }
             $converter = $this->converters->create($directory->getPath(), $remaining);
             $outputPath = $directory->getPath() . DIRECTORY_SEPARATOR . self::OUTPUT_NAME;
+            $startedAt = microtime(true);
             $result = $converter->convert($input, $outputPath, $conversion);
+            $seconds = microtime(true) - $startedAt;
             $output = @fopen($outputPath, 'rb');
             if ($output === false) {
                 throw new RequestException(500, ResponseFactory::ERROR_INTERNAL, 'The request could not be processed.');
             }
+            $this->metrics->recordConversion(self::ROUTE, Metrics::CONVERTED, $seconds);
             $inputBytes = @filesize($input);
 
             return $this->mapper->toResponse($result, $conversion, $output, $inputBytes === false ? 0 : $inputBytes);
         } catch (RequestException $exception) {
+            $this->metrics->recordConversion(self::ROUTE, $exception->getErrorCode(), 0.0);
             $this->log($exception->getStatusCode() >= 500, $exception->getErrorCode(), $exception);
 
             return $this->responses->fromException($exception);
         } catch (LibraryException $exception) {
             $code = $this->errors->codeOf($exception);
+            $this->metrics->recordConversion(self::ROUTE, $code, 0.0);
             $this->log($this->errors->isServerError($exception), $code, $exception);
 
             return $this->responses->error(
@@ -164,7 +185,7 @@ final class V2ConvertHandler implements RequestHandlerInterface
     private function log(bool $serverError, string $code, \Throwable $exception): void
     {
         $key = in_array($code, ErrorCode::all(), true) ? ErrorMapper::LOG_KEY : self::ERROR_LOG_KEY;
-        $context = [$key => $code, 'route' => 'v2_convert', 'reason' => $exception->getMessage()];
+        $context = [$key => $code, 'route' => self::ROUTE, 'reason' => $exception->getMessage()];
         if ($serverError) {
             $context['exception'] = $exception;
             $this->logger->error('The conversion failed: {' . $key . '}', $context);

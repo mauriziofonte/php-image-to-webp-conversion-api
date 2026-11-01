@@ -160,6 +160,7 @@ final class V1GoldenTest extends TestCase
             'API_KEY' => self::API_KEY,
             'V1_SCRIPT_NAME' => self::SCRIPT_NAME,
             'RATE_LIMIT' => '0',
+            'METRICS_STORE' => 'off',
         ]);
         mkdir($this->directory->path('temp'));
         $response = KernelFactory::create($config, new MemoryLogger(), $factory)->handle($request);

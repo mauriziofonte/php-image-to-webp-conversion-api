@@ -500,6 +500,27 @@ final class V2ConvertContractTest extends TestCase
         self::assertSame('24', $response->headers->get('X-Conversion-Frames'));
     }
 
+    /**
+     * Each request is counted in the metrics with its outcome; only the
+     * conversions that produced an output are timed.
+     */
+    public function testCountsEachConversionInTheMetrics(): void
+    {
+        $config = ['METRICS_STORE' => 'file', 'LOCK_DIR' => $this->directory->path('locks')];
+        $this->send(new ScriptedConverterFactory(ScriptedConverter::succeeding(self::OUTPUT)), $this->raw(self::INPUT), $config);
+        $this->send(new ScriptedConverterFactory(ScriptedConverter::failing(new InvalidImageException('Truncated.'))), $this->raw(self::INPUT), $config);
+        $this->send(new ScriptedConverterFactory(ScriptedConverter::failing(new InvalidArgumentException('Unknown.'))), $this->raw(self::INPUT), $config);
+
+        $scrape = Request::create('https://api.example.test/metrics', 'GET', [], [], [], $this->server([]));
+        $body = (string) $this->send(new ScriptedConverterFactory(ScriptedConverter::succeeding(self::OUTPUT)), $scrape, $config)->getContent();
+
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v2_convert",outcome="converted"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v2_convert",outcome="invalid_image"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v2_convert",outcome="internal_error"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversion_duration_seconds_count{route="v2_convert"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_requests_total{route="v2_convert",status="422"} 1' . "\n", $body);
+    }
+
     public function testAnswersOnlyAuthenticatedClients(): void
     {
         $factory = new ScriptedConverterFactory(ScriptedConverter::succeeding(self::OUTPUT));
@@ -517,7 +538,7 @@ final class V2ConvertContractTest extends TestCase
     private function send(ScriptedConverterFactory $factory, Request $request, array $config = []): Response
     {
         // Rate limiting is off here (LimitsTest covers it): its state would live in TEMP_DIR.
-        $values = $config + ['TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0'];
+        $values = $config + ['TEMP_DIR' => $this->directory->path(), 'API_KEY' => self::API_KEY, 'RATE_LIMIT' => '0', 'METRICS_STORE' => 'off'];
 
         return KernelFactory::create(Config::fromArray($values), $this->logger, $factory)->handle($request);
     }

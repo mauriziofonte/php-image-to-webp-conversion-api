@@ -126,6 +126,26 @@ final class V1ConvertTest extends TestCase
         self::assertSame('truncated IDAT at /tmp/x', $context['reason'] ?? null);
     }
 
+    /**
+     * Each file of a batch is counted in the metrics with its own outcome.
+     */
+    public function testCountsEachFileInTheMetrics(): void
+    {
+        $converter = ScriptedConverter::failingOn('BAD', new InvalidImageException('truncated'), self::OUTPUT);
+        $config = ['METRICS_STORE' => 'file', 'LOCK_DIR' => $this->directory->path('locks')];
+
+        $this->send($converter, $this->request(['bad.png' => 'BAD-INPUT', 'good.png' => 'GOOD-INPUT', 'also.png' => 'GOOD-TOO']), $config);
+        $this->send(ScriptedConverter::succeeding('PNG', ['format' => ImageFormat::PNG, 'passthrough' => true]), $this->request(['a.png']), $config);
+        $scrape = Request::create('https://api.example.test/metrics', 'GET', [], [], [], ['HTTP_X_API_KEY' => self::API_KEY]);
+        $body = (string) $this->send($converter, $scrape, $config)->getContent();
+
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v1",outcome="converted"} 2' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v1",outcome="invalid_image"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversions_total{route="v1",outcome="not_webp"} 1' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_conversion_duration_seconds_count{route="v1"} 2' . "\n", $body);
+        self::assertStringContainsString('image_conversion_api_requests_total{route="v1",status="200"} 2' . "\n", $body);
+    }
+
     public function testAnswers503WithRetryAfterWhenNoSlotFreesUp(): void
     {
         $converter = ScriptedConverter::failingOn('SECOND', ConcurrencyLimitException::afterWaiting(2.5, 'no slot'), self::OUTPUT);
@@ -318,6 +338,7 @@ final class V1ConvertTest extends TestCase
             'API_KEY' => self::API_KEY,
             'V1_SCRIPT_NAME' => 'convert-now',
             'RATE_LIMIT' => '0',
+            'METRICS_STORE' => 'off',
         ];
 
         return KernelFactory::create(Config::fromArray($values), $this->logger, $factory)->handle($request);

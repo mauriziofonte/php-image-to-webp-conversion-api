@@ -6,6 +6,7 @@ namespace Mfonte\ImageConversionApi\Http;
 
 use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Auth\IpAllowlist;
+use Mfonte\ImageConversionApi\Observability\Metrics;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,7 +26,9 @@ use Symfony\Component\HttpFoundation\Response;
  *    with another key 401 invalid_api_key. An unauthenticated client
  *    therefore cannot tell which paths exist, as in 1.x, which checked the
  *    key before the endpoint name. An accepted key is named in the request
- *    attribute CLIENT_ATTRIBUTE, for the per-key limits;
+ *    attribute CLIENT_ATTRIBUTE, for the per-key limits. A route that
+ *    names its own authenticator (Route::getAuthenticator()) is checked
+ *    against its keys instead;
  * 3. the route is looked up by exact path: none answers 404, a route that
  *    does not answer the method answers 405 with an Allow header;
  * 4. the handler of the route runs with a temporary directory of its own,
@@ -43,7 +46,9 @@ use Symfony\Component\HttpFoundation\Response;
  * every request ends with one info entry in the log, "Request handled",
  * with the method, the route name (null when no route matched: the path
  * itself is never logged, since the /v1 path holds V1_SCRIPT_NAME), the
- * status and the duration in milliseconds.
+ * status and the duration in milliseconds. The same request is counted in
+ * the Prometheus metrics (Metrics), with what the handler recorded, in one
+ * update of the store.
  *
  * The kernel only builds the response: it never sends it, never exits and
  * reads nothing but the Request, so that tests and other front controllers
@@ -104,7 +109,13 @@ final class Kernel
     private $logger;
 
     /**
-     * @param bool $httpsRequired whether protected paths refuse requests that did not arrive over HTTPS
+     * @var Metrics
+     */
+    private $metrics;
+
+    /**
+     * @param bool         $httpsRequired whether protected paths refuse requests that did not arrive over HTTPS
+     * @param Metrics|null $metrics       counts the requests; nothing is counted when null
      */
     public function __construct(
         Router $router,
@@ -114,7 +125,8 @@ final class Kernel
         IpAllowlist $allowlist,
         RequestDirectories $directories,
         ResponseFactory $responses,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        ?Metrics $metrics = null
     ) {
         $this->router = $router;
         $this->proxies = $proxies;
@@ -124,6 +136,7 @@ final class Kernel
         $this->directories = $directories;
         $this->responses = $responses;
         $this->logger = $logger;
+        $this->metrics = $metrics ?? new Metrics(null);
     }
 
     public function handle(Request $request): Response
@@ -138,12 +151,18 @@ final class Kernel
             $response->setContent(null);
         }
         $response->headers->set(RequestId::HEADER, $requestId);
+        $seconds = microtime(true) - $startedAt;
+        $routeName = $route !== null ? $route->getName() : null;
         $this->logger->info(self::ACCESS_LOG_MESSAGE, [
             'method' => $method,
-            'route' => $route !== null ? $route->getName() : null,
+            'route' => $routeName,
             'status' => $response->getStatusCode(),
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'duration_ms' => (int) round($seconds * 1000),
         ]);
+        $this->metrics->recordRequest($routeName, $response->getStatusCode(), $seconds);
+        if (!$this->metrics->flush()) {
+            $this->logger->warning('The metrics store (METRICS_STORE) could not be updated: the counters of this request are lost');
+        }
 
         return $response;
     }
@@ -151,7 +170,7 @@ final class Kernel
     private function dispatch(Request $request, string $method, ?Route $route): Response
     {
         if ($route === null || !$route->isPublic()) {
-            $refusal = $this->refuseAccess($request);
+            $refusal = $this->refuseAccess($request, $route !== null ? $route->getAuthenticator() : null);
             if ($refusal !== null) {
                 return $refusal;
             }
@@ -170,13 +189,14 @@ final class Kernel
      * The response that refuses a request to a protected path; null when
      * the request may go on.
      */
-    private function refuseAccess(Request $request): ?Response
+    private function refuseAccess(Request $request, ?ApiKeyAuthenticator $routeAuthenticator): ?Response
     {
         if ($this->httpsRequired && !$this->proxies->isSecure($request)) {
             return $this->responses->httpsRequired();
         }
 
-        if (!$this->authenticator->isConfigured()) {
+        $authenticator = $routeAuthenticator ?? $this->authenticator;
+        if (!$authenticator->isConfigured()) {
             $this->logger->critical('No API key is configured (API_KEY, API_KEYS): every protected request is refused');
 
             return $this->responses->authenticationNotConfigured();
@@ -185,9 +205,9 @@ final class Kernel
             return $this->responses->ipNotAllowed();
         }
 
-        switch ($this->authenticator->authenticate($request)) {
+        switch ($authenticator->authenticate($request)) {
             case ApiKeyAuthenticator::AUTHENTICATED:
-                $request->attributes->set(self::CLIENT_ATTRIBUTE, $this->authenticator->clientId($request));
+                $request->attributes->set(self::CLIENT_ATTRIBUTE, $authenticator->clientId($request));
 
                 return null;
             case ApiKeyAuthenticator::MISSING_KEY:
