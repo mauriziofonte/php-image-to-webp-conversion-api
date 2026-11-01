@@ -10,6 +10,7 @@ use Mfonte\ImageConversionApi\Conversion\LibraryConverterFactory;
 use Mfonte\ImageConversionApi\Exception\RuntimeException;
 use Mfonte\ImageConversionApi\Http\Kernel;
 use Mfonte\ImageConversionApi\Http\KernelFactory;
+use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Http\ResponseFactory;
 use Mfonte\ImageConversionApi\Limits\ConversionSlots;
 use Mfonte\ImageConversionApi\Limits\LimitingHandler;
@@ -165,6 +166,26 @@ final class LimitsTest extends TestCase
         self::assertStringContainsString(json_encode(RuntimeException::class, JSON_UNESCAPED_SLASHES) ?: '-', $lines[0]);
         self::assertStringContainsString(json_encode(LibraryInvalidArgumentException::class, JSON_UNESCAPED_SLASHES) ?: '-', $lines[0]);
         self::assertStringContainsString('The rate limit store is not usable', $lines[0]);
+    }
+
+    /**
+     * Finding F1 of the W4 review: Config refuses a LOCK_DIR that the sweep
+     * of stale request directories would remove, but a symbolic link made
+     * after the configuration was read can still put it there; the kernel
+     * tells the sweep to keep LOCK_DIR, so its lock files survive.
+     */
+    public function testTheSweepKeepsTheLockDirectory(): void
+    {
+        $stale = $this->directory->path('temp/' . RequestDirectories::PREFIX . 'stale');
+        $config = ['RATE_LIMIT' => '0', 'LOCK_DIR' => $this->directory->path('alias/locks')];
+        $kernel = KernelFactory::create(Config::fromArray($config + ['TEMP_DIR' => $this->directory->path('temp'), 'API_KEY' => self::KEY]), $this->logger, new ScriptedConverterFactory(ScriptedConverter::succeeding('WEBP')));
+        mkdir($stale . '/locks', 0700, true);
+        touch($stale . '/locks/semaphore.0.lock');
+        touch($stale, time() - 7200);
+        symlink($stale, $this->directory->path('alias'));
+
+        self::assertSame(200, $kernel->handle($this->raw('IMAGE', self::KEY))->getStatusCode());
+        self::assertFileExists($stale . '/locks/semaphore.0.lock');
     }
 
     public function testRateLimitingCanBeTurnedOff(): void

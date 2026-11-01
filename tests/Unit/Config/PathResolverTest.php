@@ -92,4 +92,17 @@ final class PathResolverTest extends TestCase
     {
         self::assertTrue(PathResolver::isInside($this->directory->path('var'), '/'));
     }
+
+    public function testComparesAsWrittenWithoutFollowingSymbolicLinks(): void
+    {
+        symlink($this->directory->path('public'), $this->directory->path('var/link'));
+
+        self::assertTrue(PathResolver::isInsideAsWritten($this->directory->path('var/link/tmp'), $this->directory->path('var')));
+        self::assertFalse(PathResolver::isInsideAsWritten($this->directory->path('var/link/tmp'), $this->directory->path('public')));
+        self::assertTrue(PathResolver::isInsideAsWritten('/a/b/../c/', '/a/c'));
+        self::assertFalse(PathResolver::isInsideAsWritten('/a/cd', '/a/c'));
+        self::assertTrue(PathResolver::isInsideAsWritten('/a', '/'));
+        self::assertSame('/a/c', PathResolver::lexical('/a//b/../c/./'));
+        self::assertSame('C:/a', PathResolver::lexical('C:\\a\\b\\..'));
+    }
 }

@@ -10,7 +10,9 @@ namespace Mfonte\ImageConversionApi\Config;
  * included), and the part that does not exist yet is normalised lexically
  * ("." and ".." segments, repeated separators).
  *
- * @internal used by Config to keep TEMP_DIR outside the web root
+ * @internal used by Config to keep TEMP_DIR outside the web root and
+ *           LOCK_DIR out of the reach of the stale-directory sweep, and by
+ *           RequestDirectories to keep that sweep away from LOCK_DIR
  */
 final class PathResolver
 {
@@ -29,7 +31,33 @@ final class PathResolver
         $path = self::resolve($path);
         $directory = self::resolve($directory);
 
-        return $path === $directory || strpos($path, rtrim($directory, '/') . '/') === 0;
+        return self::isBelowOrSame($path, $directory);
+    }
+
+    /**
+     * Whether $path is $directory or lies below it as written: compared
+     * lexically ("." and ".." segments, repeated separators), with no
+     * symbolic link resolved. A path reached through a symbolic link may
+     * be inside a directory as written and not as resolved: a check meant
+     * to keep something out of a directory needs both this and isInside().
+     *
+     * @param string $path      absolute path, existing or not
+     * @param string $directory absolute path, existing or not
+     */
+    public static function isInsideAsWritten(string $path, string $directory): bool
+    {
+        return self::isBelowOrSame(self::lexical($path), self::lexical($directory));
+    }
+
+    /**
+     * The absolute form of $path with forward slashes and no ".", ".." or
+     * empty segment, with no symbolic link resolved.
+     *
+     * @param string $path absolute path, existing or not
+     */
+    public static function lexical(string $path): string
+    {
+        return self::normalise(str_replace('\\', '/', $path));
     }
 
     /**
@@ -54,6 +82,11 @@ final class PathResolver
         $base = $real === false ? $existing : str_replace('\\', '/', $real);
 
         return self::normalise($base . '/' . implode('/', $missing));
+    }
+
+    private static function isBelowOrSame(string $path, string $directory): bool
+    {
+        return $path === $directory || strpos($path, rtrim($directory, '/') . '/') === 0;
     }
 
     private static function normalise(string $path): string

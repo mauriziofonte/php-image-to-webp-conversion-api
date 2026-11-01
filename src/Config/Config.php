@@ -8,6 +8,7 @@ use Mfonte\ImageConversionApi\Auth\ApiKeyAuthenticator;
 use Mfonte\ImageConversionApi\Exception\InvalidArgumentException;
 use Mfonte\ImageConversionApi\Exception\InvalidConfigurationException;
 use Mfonte\ImageConversionApi\Http\IpRange;
+use Mfonte\ImageConversionApi\Http\RequestDirectories;
 use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
 
 /**
@@ -83,7 +84,10 @@ use Mfonte\ImageConversionApi\Limits\ApcuRateLimitStore;
  *   concurrency slots and of the file-based rate limiter; private to the
  *   PHP user (created with mode 0700, refused when others can write to it
  *   or to a directory above it without the sticky bit), on a local
- *   filesystem, and never cleaned while the service runs. Default:
+ *   filesystem, and never cleaned while the service runs. It must not be
+ *   TEMP_DIR, nor lie inside a directory of TEMP_DIR whose name starts
+ *   with "image-conversion-api-" (RequestDirectories::PREFIX), which the
+ *   removal of stale request directories deletes. Default:
  *   TEMP_DIR/image-conversion-api.locks.
  * - RATE_LIMIT: requests per minute that one API key may send to the
  *   conversion endpoints, a token bucket refilled at that rate; 0 turns
@@ -399,6 +403,11 @@ final class Config
             $lockDirectory = rtrim($temporaryDirectory, '/\\') . DIRECTORY_SEPARATOR . self::DEFAULT_LOCK_DIR_NAME;
         } elseif (!self::isAbsolutePath($lockDirectory)) {
             $errors[] = 'LOCK_DIR must be an absolute path';
+        } elseif (self::isAbsolutePath($temporaryDirectory)) {
+            $problem = self::lockDirectoryProblem($lockDirectory, $temporaryDirectory);
+            if ($problem !== null) {
+                $errors[] = $problem;
+            }
         }
         $config->lockDirectory = $lockDirectory;
 
@@ -581,6 +590,41 @@ final class Config
         $value = trim($value);
 
         return $value === '' || strtolower($value) === 'null' ? null : $value;
+    }
+
+    /**
+     * Why LOCK_DIR cannot be used with TEMP_DIR, or null when it can.
+     *
+     * RequestDirectories removes the directories of TEMP_DIR whose name
+     * starts with RequestDirectories::PREFIX, with everything inside, once
+     * nobody has changed them for an hour: a LOCK_DIR inside one of them
+     * would be removed while the service runs, its lock files unlinked
+     * while they are held. LOCK_DIR cannot be TEMP_DIR either: TEMP_DIR is
+     * a scratch area (the system temporary directory by default) that
+     * cleaners empty, while LOCK_DIR must never be cleaned. Both paths are
+     * compared as written and with their symbolic links resolved, so that
+     * neither form slips through.
+     */
+    private static function lockDirectoryProblem(string $lockDirectory, string $temporaryDirectory): ?string
+    {
+        $forms = [
+            [PathResolver::lexical($lockDirectory), PathResolver::lexical($temporaryDirectory)],
+            [PathResolver::resolve($lockDirectory), PathResolver::resolve($temporaryDirectory)],
+        ];
+        foreach ($forms as [$lock, $temporary]) {
+            if ($lock === $temporary) {
+                return 'LOCK_DIR must not be TEMP_DIR: the lock files need a directory of their own that nothing cleans';
+            }
+            $base = rtrim($temporary, '/') . '/';
+            if (strpos($lock, $base) === 0 && strpos((string) substr($lock, strlen($base)), RequestDirectories::PREFIX) === 0) {
+                return sprintf(
+                    'LOCK_DIR must not be inside a directory of TEMP_DIR whose name starts with "%s": stale request directories are removed with everything inside',
+                    RequestDirectories::PREFIX
+                );
+            }
+        }
+
+        return null;
     }
 
     private static function isPathSegment(string $value): bool

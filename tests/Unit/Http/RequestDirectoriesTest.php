@@ -219,6 +219,41 @@ final class RequestDirectoriesTest extends TestCase
         self::assertDirectoryExists($created);
     }
 
+    /**
+     * Finding F1 of the W4 review: a LOCK_DIR named with the prefix, or
+     * inside a directory named with it, survives the sweep however it is
+     * written, and a stale directory beside it is still removed.
+     */
+    public function testNeverRemovesADirectoryThatHoldsAPathToKeep(): void
+    {
+        $locks = $this->directory->path(RequestDirectories::PREFIX . 'locks');
+        mkdir($locks);
+        touch($locks . '/semaphore.0.lock');
+        touch($locks, time() - 7200);
+        $holder = $this->directory->path(RequestDirectories::PREFIX . 'holder');
+        mkdir($holder . '/locks', 0700, true);
+        touch($holder, time() - 7200);
+        $linked = $this->directory->path(RequestDirectories::PREFIX . 'linked');
+        mkdir($linked . '/locks', 0700, true);
+        touch($linked, time() - 7200);
+        symlink($linked, $this->directory->path('alias'));
+        $stale = $this->directory->path(RequestDirectories::PREFIX . 'stale');
+        mkdir($stale);
+        touch($stale, time() - 7200);
+        $directories = new RequestDirectories($this->directory->path(), 3600, [
+            $locks,
+            $this->directory->path('other/../' . RequestDirectories::PREFIX . 'holder/locks/'),
+            $this->directory->path('alias/locks'),
+        ]);
+
+        $directories->create();
+
+        self::assertFileExists($locks . '/semaphore.0.lock');
+        self::assertDirectoryExists($holder . '/locks');
+        self::assertDirectoryExists($linked . '/locks');
+        self::assertDirectoryDoesNotExist($stale);
+    }
+
     public function testNeverRemovesATrackedDirectory(): void
     {
         $directories = new RequestDirectories($this->directory->path());

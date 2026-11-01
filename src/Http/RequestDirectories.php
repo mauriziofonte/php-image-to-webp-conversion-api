@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mfonte\ImageConversionApi\Http;
 
+use Mfonte\ImageConversionApi\Config\PathResolver;
 use Mfonte\ImageConversionApi\Exception\RuntimeException;
 
 /**
@@ -30,7 +31,11 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  * first create() of each instance removes the directories with PREFIX in
  * the parent that nobody has changed for that long (no request can still
  * own one: a request ends within CONVERSION_TIME_LIMIT), and a cleaner such
- * as systemd-tmpfiles can be scoped to PREFIX as well.
+ * as systemd-tmpfiles can be scoped to PREFIX as well. The sweep never
+ * removes a directory that is, or contains, one of the paths it is told
+ * to keep (LOCK_DIR, whose lock files must not be unlinked while they are
+ * held), compared as written and with symbolic links resolved; Config
+ * refuses such a LOCK_DIR in the first place.
  *
  * Removal never follows symbolic links, never raises a PHP warning (it may
  * run at shutdown, after the owner of a directory already removed it, under
@@ -77,19 +82,27 @@ final class RequestDirectories
     private $swept = false;
 
     /**
-     * @param string   $parent            directory that receives the request directories; created (mode 0700) on
-     *                                    first use when it does not exist
-     * @param int|null $staleAfterSeconds age, in seconds since its last change, after which a directory with PREFIX
-     *                                    in the parent is left over by a dead process and removed by the first
-     *                                    create(); null never removes one. It must be longer than any request
+     * @var list<string>
      */
-    public function __construct(string $parent, ?int $staleAfterSeconds = null)
+    private $kept;
+
+    /**
+     * @param string       $parent            directory that receives the request directories; created (mode 0700) on
+     *                                        first use when it does not exist
+     * @param int|null     $staleAfterSeconds age, in seconds since its last change, after which a directory with PREFIX
+     *                                        in the parent is left over by a dead process and removed by the first
+     *                                        create(); null never removes one. It must be longer than any request
+     * @param list<string> $kept              absolute paths that removing stale directories never removes, nor
+     *                                        any directory that contains one of them (LOCK_DIR)
+     */
+    public function __construct(string $parent, ?int $staleAfterSeconds = null, array $kept = [])
     {
         $this->parent = rtrim($parent, '/\\');
         if ($this->parent === '') {
             $this->parent = DIRECTORY_SEPARATOR;
         }
         $this->staleAfterSeconds = $staleAfterSeconds;
+        $this->kept = $kept;
     }
 
     public function getParent(): string
@@ -177,7 +190,8 @@ final class RequestDirectories
      * Removes the directories with PREFIX in the parent, other than the ones
      * this object tracks, that nobody has changed for $seconds: what a
      * process killed during a request left. A symbolic link is never
-     * followed nor removed; what cannot be removed (another user's) stays.
+     * followed nor removed; what cannot be removed (another user's) stays,
+     * and so does a directory that is, or contains, a path to keep.
      *
      * @return list<string> the directories removed
      */
@@ -195,7 +209,7 @@ final class RequestDirectories
                 continue;
             }
             $changed = @filemtime($path);
-            if ($changed !== false && $changed < $threshold && self::removeTree($path)) {
+            if ($changed !== false && $changed < $threshold && !$this->keeps($path) && self::removeTree($path)) {
                 $removed[] = $path;
             }
         }
@@ -209,6 +223,21 @@ final class RequestDirectories
     public function getTracked(): array
     {
         return array_map('strval', array_keys($this->directories));
+    }
+
+    /**
+     * Whether $directory is, or contains, a path to keep, as written or
+     * with symbolic links resolved.
+     */
+    private function keeps(string $directory): bool
+    {
+        foreach ($this->kept as $kept) {
+            if (PathResolver::isInsideAsWritten($kept, $directory) || PathResolver::isInside($kept, $directory)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function track(string $path): void

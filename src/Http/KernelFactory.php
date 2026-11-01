@@ -103,7 +103,7 @@ final class KernelFactory
             $config->isHttpsRequired(),
             new ApiKeyAuthenticator($config->getApiKeys()),
             new IpAllowlist($config->getIpAllowlist()),
-            new RequestDirectories($config->getTemporaryDirectory(), self::staleAfterSeconds($config)),
+            new RequestDirectories($config->getTemporaryDirectory(), self::staleAfterSeconds($config), [$config->getLockDirectory()]),
             $responses,
             $logger
         );

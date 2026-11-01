@@ -419,6 +419,70 @@ final class ConfigTest extends TestCase
         );
     }
 
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function provideLockDirectoriesTheSweepWouldRemove(): array
+    {
+        $insideARequestDirectory = 'LOCK_DIR must not be inside a directory of TEMP_DIR whose name starts with "image-conversion-api-"';
+
+        return [
+            'TEMP_DIR itself' => ['temp', 'LOCK_DIR must not be TEMP_DIR'],
+            'TEMP_DIR with a trailing slash' => ['temp/', 'LOCK_DIR must not be TEMP_DIR'],
+            'TEMP_DIR through ".."' => ['temp/locks/..', 'LOCK_DIR must not be TEMP_DIR'],
+            'named as a request directory' => ['temp/image-conversion-api-locks', $insideARequestDirectory],
+            'inside a request directory' => ['temp/image-conversion-api-0123/locks', $insideARequestDirectory],
+            'named as a request directory through ".."' => ['other/../temp/image-conversion-api-locks', $insideARequestDirectory],
+            'named as a request directory through a link to TEMP_DIR' => ['alias/image-conversion-api-locks', $insideARequestDirectory],
+            'inside a request directory that links elsewhere' => ['temp/image-conversion-api-link/locks', $insideARequestDirectory],
+        ];
+    }
+
+    /**
+     * Finding F1 of the W4 review: RequestDirectories removes the stale
+     * directories of TEMP_DIR named with its prefix, so a LOCK_DIR there
+     * would lose its lock files while they are held.
+     *
+     * @dataProvider provideLockDirectoriesTheSweepWouldRemove
+     */
+    #[DataProvider('provideLockDirectoriesTheSweepWouldRemove')]
+    public function testRefusesALockDirectoryTheSweepWouldRemove(string $lockDirectory, string $error): void
+    {
+        $this->makeLinkedTemporaryDirectory();
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage($error);
+
+        Config::fromArray(['TEMP_DIR' => $this->directory->path('temp'), 'LOCK_DIR' => $this->directory->path($lockDirectory)]);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function provideLockDirectoriesTheSweepLeavesAlone(): array
+    {
+        return [
+            'the default name' => ['temp/' . Config::DEFAULT_LOCK_DIR_NAME],
+            'a plain name in TEMP_DIR' => ['temp/locks'],
+            'the prefix below a plain directory' => ['temp/locks/image-conversion-api-locks'],
+            'a sibling of TEMP_DIR' => ['image-conversion-api-locks'],
+            'the parent of TEMP_DIR' => [''],
+            'a sibling whose name starts with TEMP_DIR' => ['temp-image-conversion-api-locks'],
+        ];
+    }
+
+    /**
+     * @dataProvider provideLockDirectoriesTheSweepLeavesAlone
+     */
+    #[DataProvider('provideLockDirectoriesTheSweepLeavesAlone')]
+    public function testAcceptsALockDirectoryTheSweepLeavesAlone(string $lockDirectory): void
+    {
+        $this->makeLinkedTemporaryDirectory();
+        $path = $this->directory->path($lockDirectory);
+
+        self::assertSame($path, Config::fromArray(['TEMP_DIR' => $this->directory->path('temp'), 'LOCK_DIR' => $path])->getLockDirectory());
+    }
+
     public function testListsEveryError(): void
     {
         try {
@@ -466,5 +530,17 @@ final class ConfigTest extends TestCase
             $strings[(string) $key] = $value;
         }
         self::assertSame([$strings['API_KEY']], Config::fromArray($strings)->getApiKeys());
+    }
+
+    /**
+     * TEMP_DIR at temp/, with "alias" a link to it and the request
+     * directory "image-conversion-api-link" a link to "elsewhere".
+     */
+    private function makeLinkedTemporaryDirectory(): void
+    {
+        mkdir($this->directory->path('temp'));
+        mkdir($this->directory->path('elsewhere'));
+        symlink($this->directory->path('temp'), $this->directory->path('alias'));
+        symlink($this->directory->path('elsewhere'), $this->directory->path('temp/image-conversion-api-link'));
     }
 }
