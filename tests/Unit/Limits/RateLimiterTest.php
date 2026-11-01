@@ -83,6 +83,25 @@ final class RateLimiterTest extends TestCase
         self::assertSame(0, $limiter->consume('second'));
     }
 
+    /**
+     * The wall clock steps back by an hour after the burst was spent: the
+     * key waits at most one interval more, not the hour.
+     */
+    public function testAClockThatStepsBackDoesNotLockTheKeyOut(): void
+    {
+        $limiter = $this->limiter(new MemoryRateLimitStore(), 60, 3);
+        for ($request = 0; $request < 3; ++$request) {
+            self::assertSame(0, $limiter->consume('client'));
+        }
+
+        $this->now -= 3600000000;
+
+        self::assertSame(1, $limiter->consume('client'), 'one interval, not 3600 seconds');
+        $this->now += 1000000;
+        self::assertSame(0, $limiter->consume('client'));
+        self::assertSame(1, $limiter->consume('client'), 'the bucket counts again from the new time');
+    }
+
     public function testThrowsWhenTheStoreFails(): void
     {
         $this->expectException(RuntimeException::class);

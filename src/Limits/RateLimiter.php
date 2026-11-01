@@ -18,7 +18,9 @@ use Mfonte\ImageConversionApi\Exception\RuntimeException;
  * and then pushes it one interval further; a refused request changes
  * nothing, so a client that keeps hammering does not lock itself out
  * beyond the refill. The wait it is told (Retry-After) is the time until
- * the next token, rounded up to whole seconds.
+ * the next token, rounded up to whole seconds. A stored arrival time
+ * more than (burst) intervals ahead of now, which only a clock that
+ * stepped back produces, is clamped to that bound.
  */
 final class RateLimiter
 {
@@ -74,11 +76,18 @@ final class RateLimiter
         $tolerance = $this->tolerance;
         $wait = 0;
         $updated = $this->store->update($client, static function (?int $arrival) use ($now, $interval, $tolerance, &$wait): ?int {
-            $arrival = $arrival === null ? $now : max($arrival, $now);
+            // A stored arrival can never be legitimately further ahead than
+            // tolerance + interval; one that is (the wall clock stepped back,
+            // another host's clock in a shared store) is clamped, so that the
+            // key waits at most one interval instead of the size of the step.
+            $stored = $arrival;
+            $arrival = $arrival === null ? $now : min(max($arrival, $now), $now + $tolerance + $interval);
             if ($arrival - $now > $tolerance) {
                 $wait = $arrival - $now - $tolerance;
 
-                return null;
+                // A refused request changes nothing, but a clamped arrival is
+                // stored, so that the bound holds from now on.
+                return $arrival !== $stored ? $arrival : null;
             }
             $wait = 0;
 
