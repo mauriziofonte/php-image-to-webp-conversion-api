@@ -1,0 +1,44 @@
+# Apache configuration of the document root (public/). Every request is
+# handed to index.php, the front controller, which answers 404 to unknown
+# paths. Needs mod_rewrite and "AllowOverride FileInfo" (or All); without
+# mod_rewrite only /index.php itself would answer, so every request is
+# refused instead.
+
+Options -Indexes -MultiViews
+DirectoryIndex disabled
+
+# PHP prints the errors it raises before the API runs (such as a body above
+# post_max_size) by its php.ini, which may display them: they would become
+# the body. Off for PHP-FPM (a FastCGI parameter) and for mod_php (which
+# then needs "AllowOverride Options" as well).
+<IfModule mod_env.c>
+    SetEnv PHP_ADMIN_VALUE "display_errors=Off"
+</IfModule>
+<IfModule mod_php.c>
+    php_flag display_errors off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag display_errors off
+</IfModule>
+
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # PHP-FPM behind mod_proxy_fcgi does not receive the Authorization
+    # header otherwise: the API key travels as "Authorization: Bearer".
+    RewriteCond %{HTTP:Authorization} .+
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%0]
+
+    RewriteRule .* index.php [END]
+</IfModule>
+
+# httpoxy: a "Proxy" request header must not become HTTP_PROXY. The
+# security headers come from PHP (a "Header always set" here would send
+# them twice behind PHP-FPM).
+<IfModule mod_headers.c>
+    RequestHeader unset Proxy
+</IfModule>

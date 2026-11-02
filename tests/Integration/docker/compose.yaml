@@ -1,0 +1,63 @@
+# Integration harness, fpm mode: the API behind Apache + PHP-FPM and behind
+# nginx + PHP-FPM, on the official images. Start it through run.sh, which
+# prepares HARNESS_WORKDIR (one copy of the application per stack, a TLS
+# certificate for nginx) and exports the variables below.
+#
+# Only official images, configured through read-only mounts: nothing is
+# installed or built at runtime. vendor/ comes from the host checkout and
+# must have been installed for HARNESS_PHP_VERSION beforehand. nginx runs
+# deploy/nginx/image-conversion-api.conf unchanged.
+
+name: ica-harness
+
+x-fpm: &fpm
+  image: php:${HARNESS_PHP_VERSION:?set by run.sh}-fpm
+  # FPM runs as the owner of HARNESS_WORKDIR so that the host can read the
+  # logs and clean up afterwards.
+  user: ${HARNESS_UID:?set by run.sh}:${HARNESS_GID:?set by run.sh}
+
+services:
+  fpm-apache:
+    <<: *fpm
+    volumes:
+      - ${HARNESS_WORKDIR:?set by run.sh}/apache/app:/app:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/apache/app:/srv/www/webp-converter:ro
+      - ../../../vendor:/app/vendor:ro
+      - ../../../vendor:/srv/www/webp-converter/vendor:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/apache/logs:/var/log/harness
+      - ./php-fpm/zz-harness.conf:/usr/local/etc/php-fpm.d/zz-harness.conf:ro
+      - ./php-fpm/hostile.ini:/usr/local/etc/php/conf.d/zz-hostile.ini:ro
+
+  apache:
+    image: httpd:2.4.69
+    volumes:
+      - ./apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/apache/app:/app:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/apache/app:/srv/www/webp-converter:ro
+    ports:
+      - 127.0.0.1::80
+      - 127.0.0.1::8080
+    depends_on:
+      - fpm-apache
+
+  fpm-nginx:
+    <<: *fpm
+    volumes:
+      - ${HARNESS_WORKDIR:?set by run.sh}/nginx/app:/srv/image-conversion-api:ro
+      - ../../../vendor:/srv/image-conversion-api/vendor:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/nginx/logs:/var/log/harness
+      - ./php-fpm/zz-harness.conf:/usr/local/etc/php-fpm.d/zz-harness.conf:ro
+      - ./php-fpm/hostile.ini:/usr/local/etc/php/conf.d/zz-hostile.ini:ro
+
+  nginx:
+    image: nginx:1.29.8
+    volumes:
+      - ../../../deploy/nginx/image-conversion-api.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/tls/images-api.example.com.pem:/etc/ssl/certs/images-api.example.com.pem:ro
+      - ${HARNESS_WORKDIR:?set by run.sh}/tls/images-api.example.com.key:/etc/ssl/private/images-api.example.com.key:ro
+    ports:
+      - 127.0.0.1::80
+      - 127.0.0.1::443
+    depends_on:
+      - fpm-nginx

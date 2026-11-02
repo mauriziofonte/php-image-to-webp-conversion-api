@@ -1,0 +1,94 @@
+{
+  "name": "mfonte/image-conversion-api",
+  "description": "HTTP microservice that converts untrusted images to web-optimised WEBP and AVIF files.",
+  "type": "project",
+  "license": "BSD-3-Clause",
+  "authors": [
+    {
+      "name": "Maurizio Fonte",
+      "homepage": "https://github.com/mauriziofonte"
+    }
+  ],
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/mauriziofonte/php-secure-image-converter"
+    }
+  ],
+  "require": {
+    "php": "^7.2.5 || ^8.0",
+    "ext-filter": "*",
+    "ext-hash": "*",
+    "ext-json": "*",
+    "mfonte/secure-image-converter": "dev-claude/project-thread-79fchb as 1.0.0",
+    "psr/log": "^1.1 || ^2.0 || ^3.0",
+    "symfony/console": "^5.4.35 || ^6.4.3 || ^7.0.3 || ^8.0",
+    "symfony/http-foundation": "^5.4.54 || ^6.4.46 || ^7.4.19 || ^8.1.7",
+    "vlucas/phpdotenv": "^5.6.1"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^8.5.52 || ^9.6.33 || ^10.5.62 || ^11.5.50",
+    "yoast/phpunit-polyfills": "^2.0 || ^3.0 || ^4.0"
+  },
+  "conflict": {
+    "symfony/string": "<5.4.35 || >=6.0,<6.4.3 || >=7.0,<7.0.3"
+  },
+  "suggest": {
+    "ext-apcu": "Keeps the per-key rate limit counters in shared memory (RATE_LIMIT_STORE=auto or apcu) instead of files in LOCK_DIR.",
+    "ext-posix": "Lets the conversion library keep its capability and isolation caches (CONVERTER_CACHE_DIR); without it every request probes the backends again."
+  },
+  "autoload": {
+    "psr-4": {
+      "Mfonte\\ImageConversionApi\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Mfonte\\ImageConversionApi\\Tests\\": "tests/",
+      "Mfonte\\SecureImageConverter\\Tests\\": "vendor/mfonte/secure-image-converter/tests/"
+    }
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "scripts": {
+    "test": "@php vendor/bin/phpunit",
+    "analyse": [
+      "@php tools/require-tool.php phpstan",
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --no-progress --memory-limit=1G",
+      "@php tools/phpstan/vendor/bin/phpstan analyse --configuration=phpstan-php85.neon.dist --no-progress --memory-limit=1G"
+    ],
+    "cs:check": [
+      "@php tools/require-tool.php php-cs-fixer",
+      "@php tools/php-cs-fixer/vendor/bin/php-cs-fixer fix --dry-run --diff"
+    ],
+    "cs:fix": [
+      "@php tools/require-tool.php php-cs-fixer",
+      "@php tools/php-cs-fixer/vendor/bin/php-cs-fixer fix"
+    ],
+    "taint": [
+      "@php tools/require-tool.php psalm",
+      "@php tools/psalm/vendor/bin/psalm --config=psalm.xml.dist --taint-analysis"
+    ],
+    "ci": [
+      "@cs:check",
+      "@analyse",
+      "@test"
+    ],
+    "check-env": "@php bin/image-conversion-api check-env",
+    "post-install-cmd": "@php bin/image-conversion-api check-env --informational",
+    "post-update-cmd": "@php bin/image-conversion-api check-env --informational"
+  },
+  "scripts-descriptions": {
+    "test": "Run the PHPUnit test suite.",
+    "analyse": "Run PHPStan at level max as PHP 7.2.5 and as PHP 8.5 (needs tools/phpstan).",
+    "cs:check": "Report coding style violations as a diff, without changing files (needs tools/php-cs-fixer).",
+    "cs:fix": "Fix coding style violations in place (needs tools/php-cs-fixer).",
+    "taint": "Run the Psalm taint analysis on src/ (needs tools/psalm).",
+    "check-env": "Validate the configuration (environment and .env) and the host, and exit non-zero on any error.",
+    "ci": "Run cs:check, analyse and test, in this order."
+  }
+}

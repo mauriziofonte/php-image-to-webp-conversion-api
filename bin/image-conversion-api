@@ -1,0 +1,48 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Command line of the conversion API (symfony/console). Commands:
+ *
+ *   check-env [--informational]   validate the configuration and the host
+ */
+
+use Mfonte\ImageConversionApi\Config\ConfigLoader;
+use Mfonte\ImageConversionApi\Console\CheckEnvCommand;
+use Symfony\Component\Console\Application;
+
+$projectRoot = dirname(__DIR__);
+// The Composer install hooks pass --informational: whatever happens, they
+// must not fail the install.
+$failureExitCode = in_array('--informational', $argv, true) ? 0 : 1;
+
+if (!is_file($projectRoot . '/vendor/autoload.php')) {
+    fwrite(STDERR, 'Dependencies are missing. Run: composer install' . PHP_EOL);
+    exit($failureExitCode);
+}
+
+try {
+    require $projectRoot . '/vendor/autoload.php';
+} catch (\Throwable $exception) {
+    // Composer's platform check throws when vendor/ was resolved for another PHP.
+    fwrite(STDERR, 'The dependencies cannot be loaded: ' . $exception->getMessage() . PHP_EOL);
+    exit($failureExitCode);
+}
+
+$version = 'UNKNOWN';
+if (class_exists(\Composer\InstalledVersions::class)) {
+    try {
+        $version = (string) \Composer\InstalledVersions::getPrettyVersion('mfonte/image-conversion-api');
+    } catch (\OutOfBoundsException $exception) {
+        $version = 'UNKNOWN';
+    }
+}
+
+$application = new Application('image-conversion-api', $version);
+$application->addCommands([
+    new CheckEnvCommand(new ConfigLoader($projectRoot . '/.env'), [$projectRoot . '/public']),
+]);
+
+exit($application->run());

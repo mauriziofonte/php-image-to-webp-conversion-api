@@ -1,0 +1,42 @@
+# PHPStan at level max, analysed as PHP 7.2.5 (the lowest supported version).
+# phpstan-php85.neon.dist includes this file and analyses as PHP 8.5;
+# `composer analyse` runs both. No baseline: every finding is fixed, or
+# ignored inline with a one-line justification.
+
+# The deprecation rules report calls deprecated in the analysed PHP version
+# (curl_close() and finfo_close() on PHP 8.5) or in the dependencies; the
+# PHPUnit extension and rules understand assertions, mocks and test metadata.
+# The includes are explicit: tools/phpstan installs no extension installer.
+includes:
+    - tools/phpstan/vendor/phpstan/phpstan-deprecation-rules/rules.neon
+    - tools/phpstan/vendor/phpstan/phpstan-phpunit/extension.neon
+    - tools/phpstan/vendor/phpstan/phpstan-phpunit/rules.neon
+
+# No bootstrapFiles: PHPStan's entry script already requires the working
+# directory's vendor/autoload.php and locates the project, autoload-dev and
+# vendor/ classes from composer.json and vendor/composer/installed.json. Run
+# it with a PHP that the installed vendor/ accepts: Composer's platform check
+# stops any PHP older than the one vendor/ was resolved for.
+parameters:
+    level: max
+    phpVersion: 70205
+    paths:
+        - bin/image-conversion-api
+        - public
+        - src
+        - tests
+        - tools/require-tool.php
+    # Declares the PHPUnit 10+ attributes the tests use, so that they are
+    # checked even when vendor/ holds PHPUnit 8.5 or 9.6 (see the file).
+    scanFiles:
+        - tools/phpstan/stubs/phpunit-attributes.stub
+
+services:
+    # PHPStan 2 parses the files it does not analyse (vendor/) with the grammar
+    # of phpVersion. The PHP 7 grammar cannot read dependencies written for
+    # PHP 8 (PHPUnit 10+, Symfony 6+, psr/log 2+), which then look as if they
+    # did not exist. Parse those files with the PHP 8 grammar, as PHPStan 1
+    # did; src/ and tests/ are still parsed and checked as PHP 7.2.5.
+    currentPhpVersionSimpleDirectParser:
+        arguments:
+            parser: @php8PhpParser

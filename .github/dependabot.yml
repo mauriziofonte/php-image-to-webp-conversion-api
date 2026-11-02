@@ -1,0 +1,68 @@
+version: 2
+
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    # Keep every supported release line when a new major appears
+    # ("^5.4 || ^6.4 || ^7.0 || ^8.0" grows instead of being replaced).
+    versioning-strategy: widen
+    commit-message:
+      prefix: build
+      include: scope
+    ignore:
+      # PHPUnit is capped at 11, and the polyfills must keep supporting
+      # PHPUnit 8.5 (the only line that installs on PHP 7.2).
+      - dependency-name: phpunit/phpunit
+        update-types: ['version-update:semver-major']
+      - dependency-name: yoast/phpunit-polyfills
+        update-types: ['version-update:semver-major']
+    groups:
+      composer:
+        update-types: [minor, patch]
+
+  - package-ecosystem: composer
+    directories:
+      - /tools/php-cs-fixer
+      - /tools/phpstan
+      - /tools/psalm
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      composer-tools:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      github-actions:
+        update-types: [minor, patch]
+
+  # The base image of docker/Dockerfile and the images of the example and of
+  # the integration harness.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /docker
+      - /tests/Integration/docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope

@@ -1,0 +1,16 @@
+{
+    "batch": [
+        "-quiet -pass 3 -m 6 -lossless -hint photo",
+        "-quiet -pass 3 -m 6 -lossless -hint photo",
+        "-quiet -pass 3 -m 6 -lossless -hint photo"
+    ],
+    "per-file-failures": [
+        "-quiet",
+        "-quiet"
+    ],
+    "single-file-defaults": [
+        "-quiet -m 4"
+    ],
+    "no-images": [],
+    "invalid-descriptors": []
+}

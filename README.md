@@ -2,6 +2,64 @@
 
 A simple PHP microservice that converts input images (JPEG, PNG, or any other image format) to **WEBP** using a JSON API with custom conversion options.
 
+## 2.0 endpoint: `POST /v2/convert`
+
+> 2.0 is in development; the rest of this README still describes 1.x and is rewritten before the release.
+
+`POST /v2/convert` converts one image and answers the image itself, not JSON.
+
+- **Authentication**: `Authorization: Bearer <key>` (or the 1.x `X-API-Key` header), over HTTPS.
+- **Body**: the image as the raw body (any `Content-Type` but a form, e.g. `image/png` or `application/octet-stream`), or `multipart/form-data` with the image as the one file of the field `image`.
+- **Parameters**, in the query string (or as form fields of a multipart body), parsed strictly: an unknown name or a malformed value is a `400`. `format` (`webp`, `avif`, `original`; default `webp`), `quality` (1-100), `effort` (0-9, default 4), `lossless`, `width` and `height` (1-16383), `fit` (`contain`, `cover`, `fill`), `enlarge`, `strip`, `keep_icc` and `animation` (`preserve`, `first_frame`, `reject`). Booleans are `1`/`0` or `true`/`false`.
+- **Success**: `200`, the image as the body, its exact `Content-Type` (`image/webp`, `image/avif`, or the input's type when the original is kept) and `Content-Length`, and these headers: `X-Conversion-Format`, `X-Conversion-Requested-Format`, `X-Conversion-Fallback` (`1` when the requested format could not be produced) with `X-Conversion-Fallback-Reason`, `X-Conversion-Original-Kept` (`1` when the converted file was not smaller and the input is returned unchanged), `X-Conversion-Width`, `X-Conversion-Height`, `X-Conversion-Frames`, `X-Conversion-Input-Bytes`, `X-Conversion-Backend`, `X-Conversion-Isolation`, `X-Conversion-Duration-Ms`, `X-Conversion-Warnings` (a count) and one `X-Conversion-Warning` line per warning.
+- **Errors**: `{"error": {"code": "...", "message": "..."}}` with a status that follows the code: `400` (`invalid_request`, `missing_image`), `401`, `413` (`file_too_large`, `body_too_large`), `415` (`unsupported_format`, `unsupported_media_type`), `422` (`invalid_image`, `animation_rejected`, `image_too_large`, `conversion_timeout`, `resource_limit`), `429` (`rate_limited`, with `Retry-After`), `500` (`conversion_failed`, `output_verification_failed`, `internal_error`), `503` (`isolation_unavailable`, `concurrency_limit` with `Retry-After`, `rate_limit_unavailable` when the rate limit store fails, `concurrency_unavailable` when the conversion slots in `LOCK_DIR` cannot be taken; both with `Retry-After`).
+- **Limits** (see `.env.example`): `MAX_BODY_BYTES` and `MAX_IMAGE_BYTES`, `CONCURRENCY_SLOTS` conversions at once per host with a `CONCURRENCY_WAIT`, a per-key token bucket of `RATE_LIMIT` requests per minute with a `RATE_LIMIT_BURST` (in APCu when it is enabled, otherwise in files of `LOCK_DIR`), and `CONVERSION_TIME_LIMIT`, which must stay below the timeouts of the web server and PHP-FPM. The rate limit trusts the host's clock: if it steps back, a key that spent its burst waits the size of the step (never more requests than the limit), and a `LOCK_DIR` shared by several hosts needs their clocks synchronised.
+
+```bash
+curl --fail -H "Authorization: Bearer $API_KEY" -H 'Content-Type: image/png' \
+  --data-binary @photo.png -o photo.webp -D - \
+  'https://example.com/v2/convert?format=webp&width=1200'
+```
+
+## Deprecated: the 1.x endpoint
+
+`POST /v1/{V1_SCRIPT_NAME}` keeps the 1.x request (`images[]`, `descriptors`, the `m` and `lossless` options) and the 1.x JSON document, base64 images included, for the clients of 1.x. It is **deprecated**: every response carries `Deprecation: @1793491200` (2026-11-01), `Sunset: Mon, 01 Nov 2027 00:00:00 GMT` and a `Link` to this section, and it may be removed after the sunset date. Move to `POST /v2/convert`, one image per request with the image as the response body.
+
+It now converts with the library and the limits of `/v2/convert`, which changes a few answers:
+
+- **Limits**: at most `V1_MAX_FILES` images (default 10; more is a `413`), each at most `MAX_IMAGE_BYTES`, the whole body at most `MAX_BODY_BYTES`, within `CONVERSION_TIME_LIMIT`, the rate limit and the conversion slots shared with `/v2/convert`. Each image costs one rate limit token, as one `/v2/convert` request does (a batch above `RATE_LIMIT_BURST` images costs the burst). PHP's `max_file_uploads` must be at least `V1_MAX_FILES`: PHP drops the files above it without an error.
+- **Options**: `m` (0-6) and `lossless` keep their meaning; `pass`, `near_lossless`, `hint` and `jpeg_like` are accepted and ignored. The quality is cwebp's default, 75.
+- **WEBP only**: a file whose WEBP would not be smaller than the original fails with `"status": false` (1.x returned the larger WEBP), so the client keeps its original.
+- **Statuses**: a request refused as a whole keeps the 1.x body (`{"status": false, "version": "1.0.0", "message": "..."}`) with a status other than 200: `400` (no images, invalid descriptors), `413` (too many images) and `503` with `Retry-After` (no conversion slot, or no isolation). Authentication, HTTPS, rate limit (`429`) and body size (`413`) errors are answered before the endpoint, in the 2.x body `{"error": {"code", "message"}}`.
+
+## Health, metrics and logs
+
+- **`GET /healthz`** needs neither a key nor HTTPS and answers `{"status":"ok"}`, nothing else, for load balancers. With an API key (over HTTPS, from an allowed address) it adds `"capabilities"`, the converter's formats, backends, isolation level and limits in the library's `Capabilities::toArray()` schema, which the proxy's remote mode reads; it answers `503` `{"status":"unavailable","error":{...}}` when the converter cannot be built. A wrong key is a `401`.
+- **`GET /metrics`** is the Prometheus exposition (requests by route and status, conversions by outcome, durations). It needs an API key or one of `METRICS_KEYS`, which open `/metrics` only; the counters are kept in `METRICS_STORE` (APCu, or a file of `LOCK_DIR`).
+- **Logs** are JSON lines (`LOG_FILE`, `LOG_LEVEL`) with a `request_id`: the `X-Request-Id` the client sent (the proxy's), or a new one, which every response echoes. PHP errors are logged, never displayed.
+
+## Deployment
+
+- **Apache**: `public/.htaccess` (document root `public/`) or the root `.htaccess` (installation directory served as is); `mod_rewrite` and `AllowOverride FileInfo` (with `mod_php`, `AllowOverride FileInfo Options`).
+- **nginx**: `deploy/nginx/image-conversion-api.conf` and `deploy/nginx/upstream.conf` (TLS, `client_max_body_size` above `MAX_BODY_BYTES`, every request to `public/index.php`).
+- **Docker**: `docker/Dockerfile` builds a PHP-FPM image (Ubuntu 24.04, PHP 8.3) with every backend (libvips, cwebp, gif2webp, avifenc, Imagick, GD) that runs as uid 10001 with a read-only root filesystem, no capability and `no-new-privileges`; `docker/compose.yaml` runs it that way behind nginx. Under Docker's default seccomp profile bubblewrap cannot create its namespaces, so the conversions run with the `rlimit` isolation.
+- **What `rlimit` isolation exposes**: a decoder that a hostile image takes over runs as the PHP-FPM user, in the same pid namespace and with the same network. It can read `.env` and the environment and memory of PHP-FPM (`/proc/<pid>/mem`, unless the host's Yama `ptrace_scope` is 1 or more), so every configured key and the keys of the requests being served, the files of other requests in progress in `TEMP_DIR`, `LOCK_DIR` and `CONVERTER_CACHE_DIR`, signal the workers, and reach whatever the host or container network reaches. The same holds outside Docker wherever bubblewrap cannot run. To narrow it:
+  - configure the keys as their SHA-256 digests (`sha256:<hex>` in `API_KEY`, `API_KEYS` and `METRICS_KEYS`), so that the configuration holds no key; `composer check-env` warns about plain keys without the sandbox. The keys that requests carry still pass through the workers' memory: only the sandbox, or a Yama `ptrace_scope` of 1 or more on the host, keeps a decoder out of it;
+  - give the service a network of its own;
+  - for the `sandbox` isolation in Docker, add `docker/compose.sandbox.yaml` (`docker compose -f docker/compose.yaml -f docker/compose.sandbox.yaml up -d`). It applies `docker/seccomp-bwrap.json` (Docker's default profile plus `clone`, `unshare`, `mount`, `umount2` and `pivot_root` without `CAP_SYS_ADMIN`) and `systempaths=unconfined` (unmasked `/proc` and `/sys`, which bubblewrap's own `/proc` needs). The host must allow unprivileged user namespaces; with AppArmor (Ubuntu, Debian) the container also needs `apparmor=unconfined` or a profile that allows bubblewrap, and Ubuntu 23.10 and later `kernel.apparmor_restrict_unprivileged_userns=0`. `check-env` and `/healthz` with a key show the isolation reached; without the prerequisites it stays `rlimit`. The library caches the isolation level it probed in `CONVERTER_CACHE_DIR` for an hour: when adding or removing the override, or changing the host, empty it first (`docker compose -f docker/compose.yaml down --volumes`, which removes the `converter-cache` volume only), or conversions fail with `500 conversion_failed` or keep the old level until the entry expires. `check-env` warns about a cached level that differs from the one it probes.
+- **Writable paths**: `TEMP_DIR`, `LOCK_DIR` and `CONVERTER_CACHE_DIR`. Use `LOCK_DIR=/run/image-conversion-api` (owned by the PHP user, mode 0700) rather than a directory under `/tmp`, which systemd-tmpfiles cleans up by age. Point `CONVERTER_CACHE_DIR` at a persistent writable volume when the root filesystem is read-only, or every process probes the backends again (1 to 13 seconds per request). Install `ext-posix`: without it the library keeps no such cache at all.
+- **Sizing**, for `CONCURRENCY_SLOTS` conversions at once: memory at least `CONCURRENCY_SLOTS` x 2 GiB for the conversions, plus PHP-FPM's `pm.max_children` x `memory_limit`, plus `TEMP_DIR` when it is a tmpfs (`docker/compose.yaml` shows the sum); `TEMP_DIR` at least `CONCURRENCY_SLOTS` x (`MAX_BODY_BYTES` + 256 MiB); PHP's `post_max_size` and `upload_max_filesize` at least `MAX_BODY_BYTES` and `MAX_IMAGE_BYTES`; the web server's and PHP-FPM's timeouts above `CONVERSION_TIME_LIMIT`.
+- **`display_errors`**: the API turns it off as soon as it runs. An error PHP raises before (a body above `post_max_size`) follows `php.ini`, so the shipped configurations turn it off for PHP too: `PHP_ADMIN_VALUE` in the `.htaccess` files (PHP-FPM; `php_flag` for `mod_php`) and in `deploy/nginx`, `php_admin_flag` in the Docker image's pool. Do the same in any other web server configuration, or set `display_errors=Off` in `php.ini`.
+- `composer check-env` validates the configuration and the host.
+
+## Upgrading from 1.x
+
+> Draft notes of the 2.0 development branch; the full UPGRADING guide comes with the web server configuration.
+
+- **process.php is gone.** The front controller is `public/index.php`. Point the document root at `public/` (its `.htaccess` hands every request to `index.php` and passes the `Authorization` header to PHP-FPM). Where the installation directory itself is served, as 1.x was installed (`https://example.com/webp-converter/`), the new root `.htaccess` hands every request to `public/index.php`, serves no file of the installation, and keeps the routes below that prefix (`/webp-converter/v2/convert`). Both need `mod_rewrite` and `AllowOverride FileInfo`. For nginx, see `deploy/nginx/`.
+- **The 1.x URL moved.** `https://example.com/<SCRIPT_NAME>` is now `https://example.com/v1/<V1_SCRIPT_NAME>`: point 1.x clients at the new path, and rename the `.env` key `SCRIPT_NAME` to `V1_SCRIPT_NAME` (see `.env.example`). The endpoint is deprecated (see above).
+- **Configuration** is read from environment variables first (`env[KEY]` in a PHP-FPM pool, `SetEnv` in Apache, `environment:` in Docker), then from the optional `.env` file at the root of the installation. Its comments now start with `#` (the `;` comments of a 1.x file are still skipped), and a value with spaces must be quoted. `composer check-env` (`bin/image-conversion-api check-env`) validates the configuration and the host: API key, directories, backends and isolation, `php.ini` limits; `composer install` runs it with `--informational`, which never fails.
+
 ## Why Use This Microservice?
 
 Converting images to WEBP format often requires the `exec()` function to call the `cwebp` binary on a Linux machine. However, `exec()` is not always permitted on all hosting services (e.g., shared hosting), and it's a common practice to disable it on production websites for security reasons.
@@ -27,7 +85,7 @@ By using this external microservice, you can **offload the conversion process to
 ## Configuring the `.env` File
 
 * **SCRIPT\_NAME**: The endpoint name that will be whitelisted to allow requests to the microservice.
-* **API\_KEY**: The API key that must be provided via the `X-API-Key` header.
+* **API\_KEY**: The API key that clients send as `Authorization: Bearer <key>` or in the `X-API-Key` header. Use at least 16 bytes (a multibyte character counts for each of its bytes): the 2.x service refuses shorter keys. `API_KEY`, `API_KEYS` and `METRICS_KEYS` also take a key's SHA-256 digest, `sha256:<hex>` (`printf '%s' "$KEY" | sha256sum`), so that the configuration does not hold the key itself: recommended, see **Deployment**.
 
 **Example:**
 

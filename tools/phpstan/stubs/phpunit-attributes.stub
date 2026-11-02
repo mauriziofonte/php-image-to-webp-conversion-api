@@ -1,0 +1,55 @@
+<?php
+
+/*
+ * Scanned by PHPStan (scanFiles in phpstan.neon.dist), never loaded by PHP.
+ *
+ * Test metadata is written as annotations and as PHPUnit 10+ attributes.
+ * These declarations, copied from PHPUnit 11.5 (targets and constructors),
+ * let PHPStan check the attributes the tests use even when vendor/ holds
+ * PHPUnit 8.5 or 9.6 (resolved for PHP 7.2 to 8.0), which has no attribute
+ * classes; with PHPUnit 10+ installed they match the real ones. A misspelt
+ * attribute, or one used with the wrong arguments, is still reported. Add a
+ * declaration here when the tests start using another attribute.
+ */
+
+namespace PHPUnit\Framework\Attributes;
+
+use Attribute;
+
+#[Attribute(Attribute::TARGET_CLASS | Attribute::IS_REPEATABLE)]
+final class CoversClass
+{
+    /**
+     * @param class-string $className
+     */
+    public function __construct(string $className)
+    {
+    }
+}
+
+#[Attribute(Attribute::TARGET_CLASS | Attribute::TARGET_METHOD)]
+final class CoversNothing
+{
+}
+
+#[Attribute(Attribute::TARGET_METHOD | Attribute::IS_REPEATABLE)]
+final class DataProvider
+{
+    /**
+     * @param non-empty-string $methodName
+     */
+    public function __construct(string $methodName)
+    {
+    }
+}
+
+#[Attribute(Attribute::TARGET_CLASS | Attribute::TARGET_METHOD | Attribute::IS_REPEATABLE)]
+final class Group
+{
+    /**
+     * @param non-empty-string $name
+     */
+    public function __construct(string $name)
+    {
+    }
+}

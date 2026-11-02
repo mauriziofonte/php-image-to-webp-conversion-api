@@ -1,0 +1,22 @@
+{
+    "batch": {
+        "status": 200,
+        "content_type": "application/json; charset=utf-8"
+    },
+    "per-file-failures": {
+        "status": 200,
+        "content_type": "application/json; charset=utf-8"
+    },
+    "single-file-defaults": {
+        "status": 200,
+        "content_type": "application/json; charset=utf-8"
+    },
+    "no-images": {
+        "status": 200,
+        "content_type": "application/json; charset=utf-8"
+    },
+    "invalid-descriptors": {
+        "status": 200,
+        "content_type": "application/json; charset=utf-8"
+    }
+}
