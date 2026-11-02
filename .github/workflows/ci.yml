@@ -168,7 +168,7 @@ jobs:
         run: composer taint
 
   integration:
-    name: Integration (PHP ${{ matrix.php }}, Apache and nginx)
+    name: Integration (PHP ${{ matrix.php }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -211,6 +211,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The library's security corpus has no job of its own here (the
+  # library's "security" job): it runs in process in "tests", and over
+  # HTTP against this image, which only this job builds.
   image:
     name: Container image (docker/Dockerfile, docker/compose.yaml)
     runs-on: ubuntu-24.04
