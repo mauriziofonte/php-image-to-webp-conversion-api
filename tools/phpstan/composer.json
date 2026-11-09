@@ -1,0 +1,17 @@
+{
+  "name": "mfonte/image-conversion-api-tools-phpstan",
+  "description": "PHPStan with its deprecation rules and PHPUnit extension for mfonte/image-conversion-api, installed apart from the root require-dev because they do not support PHP 7.2. Used by the analyse Composer script.",
+  "type": "project",
+  "license": "BSD-3-Clause",
+  "require": {
+    "php": "^7.4 || ^8.0",
+    "phpstan/phpstan": "^2.3",
+    "phpstan/phpstan-deprecation-rules": "^2.0",
+    "phpstan/phpstan-phpunit": "^2.0"
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

@@ -1,0 +1,451 @@
+<?php
+
+/*
+ * Taint sources for the Symfony HttpFoundation accessors that return data
+ * chosen by the client. Psalm only knows the superglobals as sources, and
+ * Request::createFromGlobals() copies them inside vendor/, which Psalm does
+ * not analyse: without these annotations every request value reaching src/
+ * would look clean. Only the taint annotations matter here; the signatures
+ * are loose on purpose so that they fit Symfony 5.4 to 8.x. Psalm merges
+ * these declarations with the real classes, which it can only parse because
+ * psalm.xml.dist targets PHP 8.4.
+ *
+ * Psalm 6.20 drops the taint when a bag object is iterated (foreach,
+ * iterator_to_array), even with getIterator() marked below: src/ must read
+ * bags through all(), keys() or the get*() accessors, which are tracked.
+ */
+
+namespace Symfony\Component\HttpFoundation {
+    class Request
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return mixed
+         */
+        public function get($key, $default = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getPathInfo() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getRequestUri() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getUri() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getUriForPath($path) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getQueryString() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getHost() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getHttpHost() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getSchemeAndHttpHost() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getBaseUrl() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getBasePath() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getUser() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getPassword() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getUserInfo() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|resource
+         */
+        public function getContent($asResource = false) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getETags() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getAcceptableContentTypes() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getEncodings() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getLanguages() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function __toString() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getClientIp() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getClientIps() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getScheme() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return int|string|null
+         */
+        public function getPort() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getMethod() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getRealMethod() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getProtocolVersion() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getRelativeUriForPath($path) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getPreferredLanguage($locales = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function getCharsets() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getPreferredFormat($default = 'html') {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getRequestFormat($default = 'html') {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function getContentTypeFormat() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return array<mixed>
+         */
+        public function toArray() {}
+    }
+
+    class ParameterBag
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return mixed
+         */
+        public function get($key, $default = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return array<mixed>
+         */
+        public function all($key = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string|int>
+         */
+        public function keys() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return \ArrayIterator<string, mixed>
+         */
+        public function getIterator() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return mixed
+         */
+        public function filter($key, $default = null, $filter = \FILTER_DEFAULT, $options = []) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getAlpha($key, $default = '') {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getAlnum($key, $default = '') {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getDigits($key, $default = '') {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getString($key, $default = '') {}
+    }
+
+    class InputBag extends ParameterBag
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return mixed
+         */
+        public function get($key, $default = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return array<mixed>
+         */
+        public function all($key = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return mixed
+         */
+        public function filter($key, $default = null, $filter = \FILTER_DEFAULT, $options = []) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getString($key, $default = '') {}
+    }
+
+    class ServerBag extends ParameterBag
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return array<string, string>
+         */
+        public function getHeaders() {}
+    }
+
+    class HeaderBag
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function get($key, $default = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return array<mixed>
+         */
+        public function all($key = null) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return list<string>
+         */
+        public function keys() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return \ArrayIterator<string, list<string|null>>
+         */
+        public function getIterator() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return bool|string|null
+         */
+        public function getCacheControlDirective($key) {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function __toString() {}
+    }
+}
+
+namespace Symfony\Component\HttpFoundation\File {
+    class UploadedFile extends File
+    {
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getClientOriginalName() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getClientOriginalExtension() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getClientOriginalPath() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string
+         */
+        public function getClientMimeType() {}
+
+        /**
+         * @psalm-taint-source input
+         *
+         * @return string|null
+         */
+        public function guessClientExtension() {}
+    }
+}
