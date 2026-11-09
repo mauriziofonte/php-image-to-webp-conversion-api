@@ -1,0 +1,15 @@
+{
+  "name": "mfonte/image-conversion-api-tools-psalm",
+  "description": "Psalm (taint analysis) for mfonte/image-conversion-api, installed apart from the root require-dev because it does not support PHP 7.2. Used by the taint Composer script.",
+  "type": "project",
+  "license": "BSD-3-Clause",
+  "require": {
+    "php": "^8.1",
+    "vimeo/psalm": "^6.20"
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

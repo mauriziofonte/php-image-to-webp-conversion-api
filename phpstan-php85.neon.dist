@@ -1,0 +1,6 @@
+# Same analysis as phpstan.neon.dist, as PHP 8.5 (the highest supported version).
+includes:
+    - phpstan.neon.dist
+
+parameters:
+    phpVersion: 80500

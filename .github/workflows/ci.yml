@@ -1,0 +1,257 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_NO_INTERACTION: '1'
+
+# Dependencies are resolved by each job for its own PHP version: no lock file
+# is committed. setup-php hands the job token to Composer, so VCS repositories
+# hosted on GitHub resolve without hitting the anonymous API rate limit.
+
+jobs:
+  validate:
+    name: Composer validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      # The manifests of the development tools are held to the same standard
+      # as the root one.
+      - name: Validate the Composer manifests
+        run: |
+          composer validate --strict
+          for tool in tools/*/; do
+            composer validate --strict "${tool}composer.json"
+          done
+
+  tests:
+    name: Tests (PHP ${{ matrix.php }}, ${{ matrix.deps }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+        deps: [lowest, highest]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The development php.ini reports every error and enables assertions.
+      # APCu, enabled for the CLI, lets the tests run the APCu rate limit
+      # store (they skip it where the extension is missing).
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          ini-file: development
+          extensions: apcu
+          ini-values: apc.enable_cli=1
+          tools: composer:v2
+
+      # PHPStan's PHP 7.2 run does not report every construct that older PHP
+      # versions reject (typed properties, trailing commas in calls), so each
+      # job first lints the code with its own PHP.
+      - name: Lint PHP files
+        run: |
+          count=0
+          status=0
+          while IFS= read -r -d '' file; do
+            count=$((count + 1))
+            output="$(php -l "$file" 2>&1)" || { printf '%s\n' "$output"; status=1; }
+          done < <( (find public src tests -type f -name '*.php' -print0; printf '%s\0' bin/image-conversion-api tools/require-tool.php) | sort -z)
+          echo "Linted $count PHP files with PHP $(php -r 'echo PHP_VERSION;')"
+          exit "$status"
+
+      # Lowest versions of the runtime dependencies; test tooling (PHPUnit and
+      # the polyfills) always takes the highest version for the running PHP.
+      # Composer 2.9+ would silently skip a floor that has an advisory and
+      # resolve the next release instead, so security blocking is turned off
+      # here (COMPOSER_NO_SECURITY_BLOCKING is its name before Composer 2.10)
+      # and the audit below fails when a floor needs raising.
+      - name: Install dependencies (lowest)
+        if: matrix.deps == 'lowest'
+        env:
+          COMPOSER_NO_BLOCKING: '1'
+          COMPOSER_NO_SECURITY_BLOCKING: '1'
+        run: |
+          composer update --prefer-lowest --prefer-stable --no-progress
+          composer update phpunit/phpunit yoast/phpunit-polyfills --with-all-dependencies --no-progress
+
+      - name: Audit dependencies (lowest)
+        if: matrix.deps == 'lowest'
+        run: composer audit
+
+      - name: Install dependencies (highest)
+        if: matrix.deps == 'highest'
+        run: composer update --no-progress
+
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
+
+      - name: Show installed packages
+        run: composer show
+
+      - name: Run the test suite
+        run: composer test
+
+  static:
+    name: Static analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
+
+      # Any advisory on the resolved dependencies, or an abandoned package,
+      # fails the job. The runtime floors in composer.json are chosen so that
+      # a lowest install is advisory-free as well (see the tests job).
+      - name: Audit dependencies
+        run: composer audit
+
+      - name: Install development tools
+        run: |
+          for tool in tools/*/; do
+            composer install --working-dir="$tool" --no-progress
+          done
+
+      - name: Coding style (php-cs-fixer)
+        run: composer cs:check
+
+      - name: PHPStan (as PHP 7.2.5 and as PHP 8.5)
+        run: composer analyse
+
+      - name: Taint analysis (Psalm)
+        run: composer taint
+
+  integration:
+    name: Integration (PHP ${{ matrix.php }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.2', '8.1', '8.5']
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      # The harness mounts vendor/ into the PHP-FPM containers and runs
+      # PHPUnit from it, so it is resolved here for the PHP version under
+      # test, dev dependencies included.
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      - name: Apache + PHP-FPM and nginx + PHP-FPM (official images)
+        env:
+          HARNESS_PHP: ${{ matrix.php }}
+          HARNESS_WORKDIR: ${{ runner.temp }}/harness
+        run: tests/Integration/docker/run.sh --php "$HARNESS_PHP" --mode fpm
+
+      - name: Upload the harness logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-logs-php-${{ matrix.php }}
+          path: |
+            ${{ runner.temp }}/harness/*.log
+            ${{ runner.temp }}/harness/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The library's security corpus has no job of its own here (the
+  # library's "security" job): it runs in process in "tests", and over
+  # HTTP against this image, which only this job builds.
+  image:
+    name: Container image (docker/Dockerfile, docker/compose.yaml)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies (highest)
+        run: composer update --no-progress
+
+      # The security corpus tests read the library's test fixtures, which
+      # its distribution archive leaves out: install it from git.
+      - name: Install the library from source (security corpus)
+        run: composer reinstall mfonte/secure-image-converter --prefer-install=source --no-progress
+
+      # The image installs its dependencies with Composer in a build stage;
+      # the job token spares it the anonymous GitHub API rate limit.
+      - name: Build and test the hardened image behind nginx, security corpus included
+        env:
+          COMPOSER_AUTH: '{"github-oauth": {"github.com": "${{ github.token }}"}}'
+          HARNESS_WORKDIR: ${{ runner.temp }}/harness
+        run: tests/Integration/docker/run.sh --php 8.5 --mode image
+
+      - name: Upload the harness logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-logs
+          path: ${{ runner.temp }}/harness/*.log
+          if-no-files-found: ignore
+          retention-days: 7
